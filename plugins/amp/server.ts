@@ -132,7 +132,8 @@ export default async function plugin(bb: BbPluginApi) {
       if (reason !== null || target === null)
         throw new Error(reason ?? "No Amp target selected.");
 
-      const requestId = randomUUID();
+      const pendingKey = `pending-create:${threadId}`;
+      const requestId = await pendingCreateRequestId(bb, pendingKey);
       const packet = await buildHandoffPacket(bb, threadId, ctx, target);
       const response = await companionRequest(
         bb,
@@ -169,6 +170,7 @@ export default async function plugin(bb: BbPluginApi) {
         threadUrl: parsed.threadUrl,
       };
       await setLink(bb, link);
+      await bb.storage.kv.delete(pendingKey);
       bb.realtime.publish(`amp:${threadId}`, { type: "link-updated" });
       return { link };
     },
@@ -231,6 +233,22 @@ export default async function plugin(bb: BbPluginApi) {
       return { state: status.state };
     },
   });
+}
+
+async function pendingCreateRequestId(bb: BbPluginApi, key: string) {
+  const pending = z
+    .object({
+      requestId: z.string().uuid(),
+      createdAt: z.number().int().nonnegative(),
+    })
+    .safeParse(await bb.storage.kv.get(key));
+  const now = Date.now();
+  if (pending.success && now - pending.data.createdAt < 9 * 60 * 1000) {
+    return pending.data.requestId;
+  }
+  const requestId = randomUUID();
+  await bb.storage.kv.set(key, { requestId, createdAt: now });
+  return requestId;
 }
 
 async function resolveContext(
