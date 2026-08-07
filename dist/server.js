@@ -14565,6 +14565,15 @@ var StatusSchema = external_exports.object({
   title: external_exports.string().nullable().optional(),
   threadUrl: external_exports.string().optional()
 });
+var TranscriptMessageSchema = external_exports.object({
+  id: external_exports.string(),
+  role: external_exports.enum(["user", "assistant"]),
+  text: external_exports.string()
+});
+var TranscriptPageSchema = external_exports.object({
+  messages: external_exports.array(TranscriptMessageSchema),
+  nextOffset: external_exports.number().int().nonnegative().nullable()
+});
 function parseConfig(configJson) {
   if (typeof configJson !== "string") return { targets: [] };
   return PluginConfigSchema.parse(JSON.parse(configJson));
@@ -14715,6 +14724,13 @@ var rpcContract = defineRpcContract({
       link: AmpLinkSchema.nullable(),
       status: StatusSchema.nullable()
     })
+  },
+  getMessages: {
+    input: external_exports.object({
+      threadId: external_exports.string(),
+      offset: external_exports.number().int().nonnegative().max(1e4).default(0)
+    }).strict(),
+    output: TranscriptPageSchema
   },
   cancelAmp: {
     input: external_exports.object({ threadId: external_exports.string() }).strict(),
@@ -14867,6 +14883,19 @@ async function plugin(bb) {
       await setLink(bb, { ...link, lastKnownState: status.state });
       bb.realtime.publish(`amp:${threadId}`, { type: "link-updated" });
       return { state: status.state };
+    },
+    async getMessages({ threadId, offset }) {
+      const link = await requireLink(bb, threadId);
+      const target = await requireLinkTarget(settings, link);
+      return TranscriptPageSchema.parse(
+        await companionRequest(
+          bb,
+          settings,
+          target,
+          "GET",
+          `/v1/threads/${encodeURIComponent(link.ampThreadId)}/messages?offset=${offset}`
+        )
+      );
     }
   });
 }

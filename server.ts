@@ -6,6 +6,7 @@ import {
   AmpStateSchema,
   StatusSchema,
   TargetSchema,
+  TranscriptPageSchema,
   hashRemote,
   parseCompanionPort,
   parseConfig,
@@ -68,6 +69,15 @@ export const rpcContract = defineRpcContract({
       link: AmpLinkSchema.nullable(),
       status: StatusSchema.nullable(),
     }),
+  },
+  getMessages: {
+    input: z
+      .object({
+        threadId: z.string(),
+        offset: z.number().int().nonnegative().max(10_000).default(0),
+      })
+      .strict(),
+    output: TranscriptPageSchema,
   },
   cancelAmp: {
     input: z.object({ threadId: z.string() }).strict(),
@@ -231,6 +241,19 @@ export default async function plugin(bb: BbPluginApi) {
       await setLink(bb, { ...link, lastKnownState: status.state });
       bb.realtime.publish(`amp:${threadId}`, { type: "link-updated" });
       return { state: status.state };
+    },
+    async getMessages({ threadId, offset }) {
+      const link = await requireLink(bb, threadId);
+      const target = await requireLinkTarget(settings, link);
+      return TranscriptPageSchema.parse(
+        await companionRequest(
+          bb,
+          settings,
+          target,
+          "GET",
+          `/v1/threads/${encodeURIComponent(link.ampThreadId)}/messages?offset=${offset}`,
+        ),
+      );
     },
   });
 }
