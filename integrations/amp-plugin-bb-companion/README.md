@@ -11,7 +11,7 @@ access, mirror transcripts, provision runners, restart Amp, or patch Amp core.
 
 Checked on 2026-08-07:
 
-- Amp CLI: `0.0.1785328548-gc93a97`
+- Amp CLI: `0.0.1786114290-g72b804`
 - `@ampcode/plugin`: `0.0.0-20260807011345-gf2437d1`
 - `@ampcode/sdk`: `0.1.0-20260729105907-g72d5ca3`
 
@@ -40,9 +40,12 @@ Amp plugin docs say plugins are Bun-executed long-lived processes that may run
 for multiple threads concurrently. The default export runs when the plugin
 loads, and `amp.onDispose(...)` is called on unload/reload/graceful shutdown.
 
-Because multiple `amp --no-tui` runner processes can load system plugins, this
-plugin has a `control` flag. Only the designated control instance binds the
-loopback port. Non-control instances load inertly and avoid port conflicts.
+Multiple Amp CLI and `amp --no-tui` processes can load the same system plugin.
+An instance with `control: false` always loads inertly. Eligible instances try
+to bind the loopback port; when it is already occupied, they authenticate the
+existing narrow companion endpoint with the configured secret. A matching
+listener makes the new instance a healthy inert secondary. An unrelated or
+unauthenticated listener remains a hard startup failure.
 
 ## Configuration
 
