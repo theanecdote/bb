@@ -1,7 +1,5 @@
 import { defineRpcContract, type BbPluginApi } from "@bb/plugin-sdk";
 import { randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { z } from "zod";
 import {
   AmpLinkSchema,
@@ -17,8 +15,6 @@ import {
   type AmpLink,
   type Target,
 } from "./contract";
-
-const execFileAsync = promisify(execFile);
 
 const rpcErrorSchema = z.object({
   code: z.string(),
@@ -253,8 +249,13 @@ async function resolveContext(
   if (environment.path === null)
     throw new Error("This BB environment has no checkout path.");
   const project = await bb.sdk.projects.get({ projectId: thread.projectId });
-  const repoPath = await realpath(environment.path);
-  const repo = await repoFacts(repoPath);
+  const repoPath = environment.path;
+  const repo = await repoFacts(
+    bb,
+    thread.environmentId,
+    repoPath,
+    project.gitRemoteUrl,
+  );
   return {
     values,
     targets: config.targets,
@@ -322,34 +323,35 @@ async function buildHandoffPacket(
   ].join("\n");
 }
 
-async function repoFacts(repoPath: string) {
-  const [branch, head, status, remote] = await Promise.all([
-    git(repoPath, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => null),
-    git(repoPath, ["rev-parse", "HEAD"]).catch(() => null),
-    git(repoPath, ["status", "--porcelain"]).catch(() => ""),
-    git(repoPath, ["config", "--get", "remote.origin.url"]).catch(() => null),
-  ]);
+async function repoFacts(
+  bb: BbPluginApi,
+  environmentId: string,
+  repoPath: string,
+  remote: string | null,
+) {
+  const status = await bb.sdk.environments.status({ environmentId });
+  if (status.outcome === "unavailable") {
+    throw new Error(
+      `BB could not inspect this checkout: ${status.failure.message}`,
+    );
+  }
+  const workspace = status.outcome === "available" ? status.workspace : null;
+  const checkout = workspace?.checkout;
+  const branch =
+    checkout?.kind === "branch" || checkout?.kind === "unborn"
+      ? checkout.branchName
+      : null;
+  const head =
+    checkout?.kind === "branch" || checkout?.kind === "detached"
+      ? checkout.headSha
+      : null;
   return {
     path: repoPath,
-    branch: branch?.trim() || null,
-    head: head?.trim() || null,
-    dirty: status.trim().length > 0,
-    remoteHash: remote === null ? null : hashRemote(remote.trim()),
+    branch,
+    head,
+    dirty: workspace?.workingTree.hasUncommittedChanges ?? false,
+    remoteHash: remote === null ? null : hashRemote(remote),
   };
-}
-
-async function git(cwd: string, args: string[]) {
-  const { stdout } = await execFileAsync("git", args, {
-    cwd,
-    timeout: 5000,
-    maxBuffer: 1024 * 1024,
-  });
-  return stdout;
-}
-
-async function realpath(path: string) {
-  const { stdout } = await execFileAsync("realpath", [path], { timeout: 5000 });
-  return stdout.trim();
 }
 
 async function getLink(bb: BbPluginApi, threadId: string) {
