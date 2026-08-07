@@ -1,0 +1,47 @@
+{
+  "name": "bb-plugin-amp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Send explicit BB handoffs to existing named Amp Runners.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/theanecdote/bb.git",
+    "directory": "plugins/amp"
+  },
+  "engines": {
+    "bb": ">=0.35",
+    "bbPluginSdk": "^0.4.1"
+  },
+  "bb": {
+    "name": "Amp",
+    "description": "Send explicit BB handoffs to existing named Amp Runners.",
+    "branding": {
+      "icon": "Zap"
+    },
+    "server": "./server.ts",
+    "app": "./app.tsx"
+  },
+  "keywords": [
+    "bb-plugin",
+    "amp"
+  ],
+  "scripts": {
+    "build": "node --conditions=source --import tsx ../../scripts/build-official-plugins.mjs amp",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@bb/shared-ui": "workspace:*",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@bb/plugin-sdk": "workspace:*",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "react": "^19.0.0",
+    "tsx": "^4.23.1",
+    "typescript": "npm:@typescript/typescript6@^6.0.2"
+  }
+}

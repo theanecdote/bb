@@ -103,6 +103,12 @@ export const BUILTIN_PLUGINS = [
  */
 export const OFFICIAL_PLUGINS = [
   {
+    name: "amp",
+    pluginId: "amp",
+    defaultEnabled: true,
+    category: "Developer tools",
+  },
+  {
     name: "github",
     pluginId: "github",
     defaultEnabled: true,
