@@ -6,7 +6,6 @@ import {
   AmpStateSchema,
   StatusSchema,
   TargetSchema,
-  buildSharedPortUrl,
   hashRemote,
   parseCompanionPort,
   parseConfig,
@@ -15,6 +14,7 @@ import {
   type AmpLink,
   type Target,
 } from "./contract";
+import { requestThroughHost } from "./host-client";
 
 const rpcErrorSchema = z.object({
   code: z.string(),
@@ -404,49 +404,35 @@ async function companionRequest(
     throw new Error("Configure companionSecret before using Amp.");
   }
   const port = parseCompanionPort(values.companionPort);
-  bb.hosts.declareSharedPorts(target.bbHostId, [port]);
-  const tunnel = await bb.hosts.ensureSharedPortTunnel(target.bbHostId);
-  const url = buildSharedPortUrl(tunnel.label, tunnel.baseDomain, port, path);
-  const payload = body === undefined ? undefined : JSON.stringify(body);
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
-  let response: Response;
+  let response: Awaited<ReturnType<typeof requestThroughHost>>;
   try {
-    response = await fetch(url, {
-      method,
-      signal: controller.signal,
-      headers: {
-        authorization: `Bearer ${values.companionSecret}`,
-        accept: "application/json",
-        ...(payload ? { "content-type": "application/json" } : {}),
+    response = await requestThroughHost(
+      bb,
+      target.bbHostId,
+      target.companionClientPath,
+      {
+        method,
+        path,
+        port,
+        secret: values.companionSecret,
+        ...(body === undefined ? {} : { body }),
       },
-      ...(payload ? { body: payload } : {}),
-    });
+    );
   } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new Error("TIMEOUT: Companion request timed out.");
-    }
-    throw new Error("Companion is unavailable through the enrolled BB host.");
-  } finally {
-    clearTimeout(timeout);
+    if (error instanceof Error && error.message.startsWith("TIMEOUT:"))
+      throw error;
+    throw new Error(
+      `Companion is unavailable on the enrolled BB host: ${error instanceof Error ? error.message : "unknown error"}`,
+    );
   }
 
-  const text = await response.text();
-  let json: unknown = null;
-  if (text.length > 0) {
-    try {
-      json = JSON.parse(text);
-    } catch {
-      throw new Error("Companion returned invalid JSON.");
-    }
-  }
   if (!response.ok) {
-    const parsed = rpcErrorSchema.safeParse(json);
+    const parsed = rpcErrorSchema.safeParse(response.body);
     throw new Error(
       parsed.success
         ? `${parsed.data.code}: ${parsed.data.message}`
         : "Companion request failed.",
     );
   }
-  return json;
+  return response.body;
 }
