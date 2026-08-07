@@ -1,4 +1,9 @@
-import { useEffect, useState } from "react";
+import {
+  useEffect,
+  useState,
+  type ButtonHTMLAttributes,
+  type ReactNode,
+} from "react";
 import {
   definePluginApp,
   useBbNavigate,
@@ -6,13 +11,46 @@ import {
   useRpc,
 } from "@bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
-import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+
+function Button({
+  className = "",
+  variant = "default",
+  size: _size,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: "default" | "outline";
+  size?: "sm";
+}) {
+  return (
+    <button
+      className={`inline-flex h-8 items-center justify-center rounded-md border px-3 text-sm font-medium disabled:pointer-events-none disabled:opacity-50 ${
+        variant === "outline"
+          ? "border-border bg-background text-foreground hover:bg-muted"
+          : "border-transparent bg-primary text-primary-foreground hover:bg-primary/90"
+      } ${className}`}
+      {...props}
+    />
+  );
+}
+
+function Card({ children }: { children: ReactNode }) {
+  return <section className="rounded-lg border border-border bg-card">{children}</section>;
+}
+
+function CardHeader({ children }: { children: ReactNode }) {
+  return <div className="border-b border-border px-4 py-3">{children}</div>;
+}
+
+function CardTitle({ children }: { children: ReactNode }) {
+  return <h3 className="text-sm font-semibold">{children}</h3>;
+}
+
+function CardContent({ children, className = "" }: { children: ReactNode; className?: string }) {
+  return <div className={`p-4 ${className}`}>{children}</div>;
+}
+
+const linkButtonClass =
+  "inline-flex h-8 items-center justify-center rounded-md border border-border bg-background px-3 text-sm font-medium text-foreground hover:bg-muted";
 
 type PanelState = Awaited<ReturnType<ReturnType<typeof useRpc<typeof rpcContract>>["call"]>>;
 
@@ -113,11 +151,14 @@ function AmpPanel({ threadId }: { threadId: string }) {
             ) : (
               <>
                 {link.threadUrl ? (
-                  <Button size="sm" variant="outline" asChild>
-                    <a href={link.threadUrl} target="_blank" rel="noreferrer">
-                      Open in Amp
-                    </a>
-                  </Button>
+                  <a
+                    className={linkButtonClass}
+                    href={link.threadUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Open in Amp
+                  </a>
                 ) : null}
                 <Button
                   size="sm"
