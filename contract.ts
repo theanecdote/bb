@@ -27,6 +27,7 @@ export const TargetSchema = z.object({
   bbHostId: z.string().min(1),
   repoRoot: z.string().min(1),
   repoRemote: z.string().optional(),
+  companionClientPath: z.string().regex(/^\/[A-Za-z0-9._/-]+$/),
 });
 
 export const PluginConfigSchema = z.object({
@@ -48,8 +49,14 @@ export function parseConfig(configJson: string | boolean | undefined) {
   return PluginConfigSchema.parse(JSON.parse(configJson));
 }
 
-export function selectTarget(targets: Target[], hostId: string, repoPath: string) {
-  const matches = targets.filter((target) => target.bbHostId === hostId && target.repoRoot === repoPath);
+export function selectTarget(
+  targets: Target[],
+  hostId: string,
+  repoPath: string,
+) {
+  const matches = targets.filter(
+    (target) => target.bbHostId === hostId && target.repoRoot === repoPath,
+  );
   return matches.length === 1 ? matches[0] : null;
 }
 
@@ -67,13 +74,4 @@ export function parseCompanionPort(value: string | boolean | undefined) {
     throw new Error("Configure companionPort as a valid TCP port.");
   }
   return port;
-}
-
-export function buildSharedPortUrl(
-  label: string,
-  baseDomain: string,
-  port: number,
-  path: string,
-) {
-  return new URL(path, `https://${label}--${port}.${baseDomain}`);
 }

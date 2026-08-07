@@ -14553,7 +14553,8 @@ var TargetSchema = external_exports.object({
   runnerId: external_exports.string().min(1),
   bbHostId: external_exports.string().min(1),
   repoRoot: external_exports.string().min(1),
-  repoRemote: external_exports.string().optional()
+  repoRemote: external_exports.string().optional(),
+  companionClientPath: external_exports.string().regex(/^\/[A-Za-z0-9._/-]+$/)
 });
 var PluginConfigSchema = external_exports.object({
   targets: external_exports.array(TargetSchema).default([])
@@ -14569,7 +14570,9 @@ function parseConfig(configJson) {
   return PluginConfigSchema.parse(JSON.parse(configJson));
 }
 function selectTarget(targets, hostId, repoPath) {
-  const matches = targets.filter((target) => target.bbHostId === hostId && target.repoRoot === repoPath);
+  const matches = targets.filter(
+    (target) => target.bbHostId === hostId && target.repoRoot === repoPath
+  );
   return matches.length === 1 ? matches[0] : null;
 }
 function hashRemote(remote) {
@@ -14586,8 +14589,84 @@ function parseCompanionPort(value) {
   }
   return port;
 }
-function buildSharedPortUrl(label, baseDomain, port, path) {
-  return new URL(path, `https://${label}--${port}.${baseDomain}`);
+
+// host-client.ts
+var RESPONSE_MARKER = "BB_AMP_RESPONSE:";
+var READY_MARKER = "BB_AMP_READY";
+async function requestThroughHost(bb, hostId, clientPath, request) {
+  const terminal = await bb.sdk.terminals.create({
+    cols: 80,
+    rows: 24,
+    scope: { kind: "host_path", hostId, cwd: null },
+    start: {
+      mode: "command",
+      command: `stty -echo; exec node ${shellQuote(clientPath)}`
+    },
+    title: "Amp companion request"
+  });
+  try {
+    let sinceSeq = 0;
+    let output = "";
+    const readyDeadline = Date.now() + 1e4;
+    while (!output.includes(READY_MARKER) && Date.now() < readyDeadline) {
+      const next = await readOutput(bb, terminal.id, sinceSeq);
+      sinceSeq = next.nextSeq;
+      output += next.text;
+      if (!output.includes(READY_MARKER)) await delay(50);
+    }
+    if (!output.includes(READY_MARKER)) {
+      throw new Error("Companion host client did not become ready.");
+    }
+    const encoded = Buffer.from(JSON.stringify(request), "utf8").toString(
+      "base64"
+    );
+    await bb.sdk.terminals.input({
+      terminalId: terminal.id,
+      dataBase64: Buffer.from(`${encoded}
+`, "utf8").toString("base64")
+    });
+    const deadline = Date.now() + 35e3;
+    while (Date.now() < deadline) {
+      const next = await readOutput(bb, terminal.id, sinceSeq);
+      sinceSeq = next.nextSeq;
+      output += next.text;
+      const response = parseHostClientOutput(output);
+      if (response !== null) return response;
+      await delay(100);
+    }
+    throw new Error("TIMEOUT: Companion request timed out.");
+  } finally {
+    await bb.sdk.terminals.close({ terminalId: terminal.id, mode: "force" }).catch(() => void 0);
+  }
+}
+async function readOutput(bb, terminalId, sinceSeq) {
+  const output = await bb.sdk.terminals.output({
+    terminalId,
+    sinceSeq,
+    tailBytes: 256 * 1024,
+    limitChunks: 1e3
+  });
+  return {
+    nextSeq: output.nextSeq,
+    text: output.chunks.map((chunk) => Buffer.from(chunk.dataBase64, "base64").toString("utf8")).join("")
+  };
+}
+function parseHostClientOutput(output) {
+  const markerIndex = output.lastIndexOf(RESPONSE_MARKER);
+  if (markerIndex < 0) return null;
+  const encoded = output.slice(markerIndex + RESPONSE_MARKER.length).split(/\r?\n/, 1)[0].trim();
+  if (!encoded) return null;
+  try {
+    return JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
+  } catch {
+    throw new Error("Companion host client returned invalid JSON.");
+  }
+}
+function shellQuote(value) {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // server.ts
@@ -14632,7 +14711,10 @@ var rpcContract = defineRpcContract({
   },
   refreshStatus: {
     input: external_exports.object({ threadId: external_exports.string() }).strict(),
-    output: external_exports.object({ link: AmpLinkSchema.nullable(), status: StatusSchema.nullable() })
+    output: external_exports.object({
+      link: AmpLinkSchema.nullable(),
+      status: StatusSchema.nullable()
+    })
   },
   cancelAmp: {
     input: external_exports.object({ threadId: external_exports.string() }).strict(),
@@ -14660,7 +14742,11 @@ async function plugin(bb) {
   bb.rpc.register(rpcContract, {
     async getPanelState({ threadId }) {
       const ctx = await resolveContext(bb, settings, threadId);
-      const target = selectTarget(ctx.targets, ctx.environment.hostId, ctx.repoPath);
+      const target = selectTarget(
+        ctx.targets,
+        ctx.environment.hostId,
+        ctx.repoPath
+      );
       const link = await getLink(bb, threadId);
       const reason = await sendBlockReason(ctx, target, link !== null);
       return {
@@ -14678,20 +14764,32 @@ async function plugin(bb) {
     async sendToAmp({ threadId, targetName, mode }) {
       const ctx = await resolveContext(bb, settings, threadId);
       const target = targetName === void 0 ? selectTarget(ctx.targets, ctx.environment.hostId, ctx.repoPath) : ctx.targets.find((candidate) => candidate.name === targetName) ?? null;
-      const reason = await sendBlockReason(ctx, target, await getLink(bb, threadId) !== null);
-      if (reason !== null || target === null) throw new Error(reason ?? "No Amp target selected.");
+      const reason = await sendBlockReason(
+        ctx,
+        target,
+        await getLink(bb, threadId) !== null
+      );
+      if (reason !== null || target === null)
+        throw new Error(reason ?? "No Amp target selected.");
       const requestId = randomUUID();
       const packet = await buildHandoffPacket(bb, threadId, ctx, target);
-      const response = await companionRequest(bb, settings, target, "POST", "/v1/threads", {
-        requestId,
-        runnerId: target.runnerId,
-        mode,
-        message: packet,
-        metadata: {
-          bbThreadId: threadId,
-          repo: ctx.project.name
+      const response = await companionRequest(
+        bb,
+        settings,
+        target,
+        "POST",
+        "/v1/threads",
+        {
+          requestId,
+          runnerId: target.runnerId,
+          mode,
+          message: packet,
+          metadata: {
+            bbThreadId: threadId,
+            repo: ctx.project.name
+          }
         }
-      });
+      );
       const parsed = external_exports.object({
         threadId: external_exports.string(),
         state: AmpStateSchema,
@@ -14722,7 +14820,11 @@ async function plugin(bb) {
         { message }
       );
       const parsed = StatusSchema.parse(response);
-      await setLink(bb, { ...link, lastKnownState: parsed.state, threadUrl: parsed.threadUrl ?? link.threadUrl });
+      await setLink(bb, {
+        ...link,
+        lastKnownState: parsed.state,
+        threadUrl: parsed.threadUrl ?? link.threadUrl
+      });
       bb.realtime.publish(`amp:${threadId}`, { type: "link-updated" });
       return { state: parsed.state };
     },
@@ -14739,7 +14841,11 @@ async function plugin(bb) {
           `/v1/threads/${encodeURIComponent(link.ampThreadId)}`
         )
       );
-      const nextLink = { ...link, lastKnownState: status.state, threadUrl: status.threadUrl ?? link.threadUrl };
+      const nextLink = {
+        ...link,
+        lastKnownState: status.state,
+        threadUrl: status.threadUrl ?? link.threadUrl
+      };
       await setLink(bb, nextLink);
       return { link: nextLink, status };
     },
@@ -14766,18 +14872,38 @@ async function resolveContext(bb, settings, threadId) {
   const values = await settings.get();
   const config2 = parseConfig(values.configJson);
   const thread = await bb.sdk.threads.get({ threadId });
-  if (thread.environmentId === null) throw new Error("This BB thread has no environment.");
-  const environment = await bb.sdk.environments.get({ environmentId: thread.environmentId });
-  if (environment.path === null) throw new Error("This BB environment has no checkout path.");
+  if (thread.environmentId === null)
+    throw new Error("This BB thread has no environment.");
+  const environment = await bb.sdk.environments.get({
+    environmentId: thread.environmentId
+  });
+  if (environment.path === null)
+    throw new Error("This BB environment has no checkout path.");
   const project = await bb.sdk.projects.get({ projectId: thread.projectId });
   const repoPath = environment.path;
-  const repo = await repoFacts(bb, thread.environmentId, repoPath, project.gitRemoteUrl);
-  return { values, targets: config2.targets, thread, environment, project, repoPath, repo, dirty: repo.dirty };
+  const repo = await repoFacts(
+    bb,
+    thread.environmentId,
+    repoPath,
+    project.gitRemoteUrl
+  );
+  return {
+    values,
+    targets: config2.targets,
+    thread,
+    environment,
+    project,
+    repoPath,
+    repo,
+    dirty: repo.dirty
+  };
 }
 async function sendBlockReason(ctx, target, alreadyLinked) {
-  if (alreadyLinked) return "This BB thread is already linked to an Amp thread.";
+  if (alreadyLinked)
+    return "This BB thread is already linked to an Amp thread.";
   if (ctx.targets.length === 0) return "No Amp target mappings are configured.";
-  if (target === null) return "No single Amp target matches this BB host and canonical repo path.";
+  if (target === null)
+    return "No single Amp target matches this BB host and canonical repo path.";
   if (target.repoRemote !== void 0 && ctx.repo.remoteHash !== hashRemote(target.repoRemote)) {
     return "The selected Amp target repo identity does not match this checkout.";
   }
@@ -14812,7 +14938,9 @@ async function buildHandoffPacket(bb, threadId, ctx, target) {
 async function repoFacts(bb, environmentId, repoPath, remote) {
   const status = await bb.sdk.environments.status({ environmentId });
   if (status.outcome === "unavailable") {
-    throw new Error(`BB could not inspect this checkout: ${status.failure.message}`);
+    throw new Error(
+      `BB could not inspect this checkout: ${status.failure.message}`
+    );
   }
   const workspace = status.outcome === "available" ? status.workspace : null;
   const checkout = workspace?.checkout;
@@ -14845,7 +14973,9 @@ async function requireLinkTarget(settings, link) {
     (candidate) => candidate.name === link.targetName && candidate.runnerId === link.runnerId
   );
   if (target === void 0) {
-    throw new Error("The Amp target for this existing thread link is no longer configured.");
+    throw new Error(
+      "The Amp target for this existing thread link is no longer configured."
+    );
   }
   return target;
 }
@@ -14855,48 +14985,34 @@ async function companionRequest(bb, settings, target, method, path, body) {
     throw new Error("Configure companionSecret before using Amp.");
   }
   const port = parseCompanionPort(values.companionPort);
-  bb.hosts.declareSharedPorts(target.bbHostId, [port]);
-  const tunnel = await bb.hosts.ensureSharedPortTunnel(target.bbHostId);
-  const url2 = buildSharedPortUrl(tunnel.label, tunnel.baseDomain, port, path);
-  const payload = body === void 0 ? void 0 : JSON.stringify(body);
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 3e4);
   let response;
   try {
-    response = await fetch(url2, {
-      method,
-      signal: controller.signal,
-      headers: {
-        authorization: `Bearer ${values.companionSecret}`,
-        accept: "application/json",
-        ...payload ? { "content-type": "application/json" } : {}
-      },
-      ...payload ? { body: payload } : {}
-    });
+    response = await requestThroughHost(
+      bb,
+      target.bbHostId,
+      target.companionClientPath,
+      {
+        method,
+        path,
+        port,
+        secret: values.companionSecret,
+        ...body === void 0 ? {} : { body }
+      }
+    );
   } catch (error51) {
-    if (error51 instanceof Error && error51.name === "AbortError") {
-      throw new Error("TIMEOUT: Companion request timed out.");
-    }
-    throw new Error("Companion is unavailable through the enrolled BB host.");
-  } finally {
-    clearTimeout(timeout);
-  }
-  const text = await response.text();
-  let json2 = null;
-  if (text.length > 0) {
-    try {
-      json2 = JSON.parse(text);
-    } catch {
-      throw new Error("Companion returned invalid JSON.");
-    }
+    if (error51 instanceof Error && error51.message.startsWith("TIMEOUT:"))
+      throw error51;
+    throw new Error(
+      `Companion is unavailable on the enrolled BB host: ${error51 instanceof Error ? error51.message : "unknown error"}`
+    );
   }
   if (!response.ok) {
-    const parsed = rpcErrorSchema.safeParse(json2);
+    const parsed = rpcErrorSchema.safeParse(response.body);
     throw new Error(
       parsed.success ? `${parsed.data.code}: ${parsed.data.message}` : "Companion request failed."
     );
   }
-  return json2;
+  return response.body;
 }
 export {
   plugin as default,
