@@ -73,11 +73,16 @@ function validate(value) {
   if (!value || typeof value !== "object") throw new Error("Invalid request.");
   if (!["GET", "POST"].includes(value.method))
     throw new Error("Invalid method.");
+  if (typeof value.path !== "string") throw new Error("Invalid path.");
+  const url = new URL(value.path, "http://companion.local");
   if (
-    typeof value.path !== "string" ||
+    url.origin !== "http://companion.local" ||
     !/^\/v1\/threads(?:\/T-[A-Za-z0-9_-]+(?:\/(?:messages|cancel))?)?$/.test(
-      value.path,
-    )
+      url.pathname,
+    ) ||
+    [...url.searchParams.keys()].some((key) => key !== "offset") ||
+    (url.searchParams.has("offset") &&
+      !/^\d{1,5}$/.test(url.searchParams.get("offset") ?? ""))
   )
     throw new Error("Invalid path.");
   if (!Number.isInteger(value.port) || value.port < 1 || value.port > 65535)

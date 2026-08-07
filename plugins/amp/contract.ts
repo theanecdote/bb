@@ -41,6 +41,17 @@ export const StatusSchema = z.object({
   threadUrl: z.string().optional(),
 });
 
+export const TranscriptMessageSchema = z.object({
+  id: z.string(),
+  role: z.enum(["user", "assistant"]),
+  text: z.string(),
+});
+
+export const TranscriptPageSchema = z.object({
+  messages: z.array(TranscriptMessageSchema),
+  nextOffset: z.number().int().nonnegative().nullable(),
+});
+
 export type AmpLink = z.infer<typeof AmpLinkSchema>;
 export type Target = z.infer<typeof TargetSchema>;
 

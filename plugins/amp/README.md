@@ -62,6 +62,17 @@ The UI contributes:
 - a compact `Amp` thread header action
 - a thread side panel with `Send to Amp`, `Open in Amp`, `Refresh`, `Cancel`,
   and `Send Follow-up`
+- a read-through conversation view for the linked Amp thread, rendered with
+  BB's native Markdown component
+
+Conversation pages are fetched on demand from Amp's stable
+`PluginThread.messages()` API. While Amp is working, BB refreshes status and
+completed messages every two seconds. Messages are not stored in BB KV;
+thinking and tool payloads are not transported. Because Amp only permits
+`messages()` while a thread is connected, the companion keeps a bounded,
+in-memory cache of up to 100 normalized text messages for threads used during
+its current process lifetime. The cache is not persisted across companion
+reloads.
 
 `Send to Amp` creates one Amp thread for the BB thread and stores only:
 

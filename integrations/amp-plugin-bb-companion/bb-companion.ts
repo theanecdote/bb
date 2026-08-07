@@ -1,4 +1,9 @@
-import type { PluginAPI, PluginThread, ThreadID } from "@ampcode/plugin";
+import type {
+  PluginAPI,
+  PluginThread,
+  ThreadID,
+  ThreadMessage,
+} from "@ampcode/plugin";
 import { timingSafeEqual } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -36,6 +41,13 @@ type StoredThread = {
   thread: PluginThread;
   state: BridgeState;
   threadUrl?: string;
+  transcript: TranscriptMessage[];
+};
+
+type TranscriptMessage = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
 };
 
 const LOOPBACK_HOST = "127.0.0.1";
@@ -48,6 +60,10 @@ const DEFAULT_CONFIG_PATH = join(
 );
 const MAX_BODY_BYTES = 128 * 1024;
 const REQUEST_ID_TTL_MS = 10 * 60 * 1000;
+const TRANSCRIPT_PAGE_SIZE = 20;
+const MAX_TRANSCRIPT_MESSAGE_CHARS = 24_000;
+const MAX_TRANSCRIPT_PAGE_CHARS = 96_000;
+const MAX_CACHED_TRANSCRIPT_MESSAGES = 100;
 
 export default async function plugin(amp: PluginAPI) {
   const config = parseConfig(await readProtectedConfig());
@@ -66,7 +82,13 @@ export default async function plugin(amp: PluginAPI) {
   const server = createServer((req, res) => {
     void handleRequest(amp, config, threads, requestIds, req, res).catch(
       (error) => {
-        amp.logger.log("bb-companion request failed", publicError(error).code);
+        const diagnostic = errorDiagnostic(error);
+        amp.logger.log(
+          "bb-companion request failed",
+          publicError(error).code,
+          diagnostic.name,
+          diagnostic.message,
+        );
         writeJson(res, 500, publicError(error));
       },
     );
@@ -227,7 +249,12 @@ async function handleRequest(
     }
 
     const threadUrl = buildThreadUrl(amp, config, thread.id);
-    const stored: StoredThread = { thread, state: "created", threadUrl };
+    const stored: StoredThread = {
+      thread,
+      state: "created",
+      threadUrl,
+      transcript: [],
+    };
     threads.set(thread.id, stored);
     requestIds.set(input.requestId, {
       threadId: thread.id,
@@ -242,11 +269,36 @@ async function handleRequest(
     thread: amp.threads.get(route.threadId as ThreadID),
     state: "unknown" as BridgeState,
     threadUrl: buildThreadUrl(amp, config, route.threadId),
+    transcript: [],
   };
 
   if (route.kind === "get") {
     await refreshState(stored);
     writeJson(res, 200, threadResponse(route.threadId, stored));
+    return;
+  }
+
+  if (route.kind === "messages") {
+    const offset = transcriptOffset(url);
+    try {
+      const messages = await stored.thread.messages({
+        from: "end",
+        offset,
+        limit: TRANSCRIPT_PAGE_SIZE,
+        roles: ["user", "assistant"],
+      });
+      const normalized = normalizeTranscript(messages);
+      mergeTranscript(stored, normalized);
+      writeJson(res, 200, {
+        messages: normalized,
+        nextOffset:
+          messages.length === TRANSCRIPT_PAGE_SIZE
+            ? offset + TRANSCRIPT_PAGE_SIZE
+            : null,
+      });
+    } catch {
+      writeJson(res, 200, cachedTranscriptPage(stored.transcript, offset));
+    }
     return;
   }
 
@@ -335,9 +387,17 @@ async function appendUserMessage(
 ) {
   stored.state = "running";
   await thread.appendUserMessage({ type: "user-message", content: message });
+  mergeTranscript(stored, [
+    {
+      id: `bridge-user-${Date.now()}-${stored.transcript.length}`,
+      role: "user",
+      text: message.slice(0, MAX_TRANSCRIPT_MESSAGE_CHARS),
+    },
+  ]);
   void thread
     .waitForResponse({ timeoutMs: 30 * 60 * 1000 })
-    .then(() => {
+    .then((response) => {
+      mergeTranscript(stored, normalizeTranscript([response]));
       stored.state = "idle";
     })
     .catch(() => {
@@ -369,11 +429,83 @@ export function matchRoute(method: string, path: string) {
   const threadId = decodeURIComponent(match[1]);
   if (!/^T-[A-Za-z0-9_-]+$/.test(threadId)) return null;
   if (method === "GET" && !match[2]) return { kind: "get" as const, threadId };
+  if (method === "GET" && match[2] === "messages")
+    return { kind: "messages" as const, threadId };
   if (method === "POST" && match[2] === "messages")
     return { kind: "message" as const, threadId };
   if (method === "POST" && match[2] === "cancel")
     return { kind: "cancel" as const, threadId };
   return null;
+}
+
+function transcriptOffset(url: URL) {
+  if ([...url.searchParams.keys()].some((key) => key !== "offset")) {
+    throw typedError("INVALID_REQUEST", "Unsupported query parameter.");
+  }
+  const raw = url.searchParams.get("offset") ?? "0";
+  if (!/^\d{1,5}$/.test(raw)) {
+    throw typedError("INVALID_REQUEST", "Invalid transcript offset.");
+  }
+  const offset = Number(raw);
+  if (offset > 10_000) {
+    throw typedError("INVALID_REQUEST", "Invalid transcript offset.");
+  }
+  return offset;
+}
+
+export function normalizeTranscript(messages: ThreadMessage[]) {
+  const normalized = messages
+    .filter(
+      (
+        message,
+      ): message is Extract<ThreadMessage, { role: "user" | "assistant" }> =>
+        message.role === "user" || message.role === "assistant",
+    )
+    .map((message) => ({
+      id: String(message.id),
+      role: message.role,
+      text: message.content
+        .filter((block) => block.type === "text")
+        .map((block) => block.text)
+        .join("\n\n")
+        .trim()
+        .slice(0, MAX_TRANSCRIPT_MESSAGE_CHARS),
+    }))
+    .filter((message) => message.text.length > 0);
+
+  let remaining = MAX_TRANSCRIPT_PAGE_CHARS;
+  const bounded = [] as typeof normalized;
+  for (let index = normalized.length - 1; index >= 0; index -= 1) {
+    if (remaining <= 0) break;
+    const message = normalized[index];
+    const text = message.text.slice(-remaining);
+    bounded.push({ ...message, text });
+    remaining -= text.length;
+  }
+  return bounded.reverse();
+}
+
+function mergeTranscript(stored: StoredThread, incoming: TranscriptMessage[]) {
+  const merged = [...stored.transcript];
+  for (const message of incoming) {
+    const index = merged.findIndex((candidate) => candidate.id === message.id);
+    if (index >= 0) merged[index] = message;
+    else merged.push(message);
+  }
+  stored.transcript = merged.slice(-MAX_CACHED_TRANSCRIPT_MESSAGES);
+}
+
+export function cachedTranscriptPage(
+  transcript: TranscriptMessage[],
+  offset: number,
+) {
+  const end = Math.max(0, transcript.length - offset);
+  const start = Math.max(0, end - TRANSCRIPT_PAGE_SIZE);
+  const messages = transcript.slice(start, end);
+  return {
+    messages,
+    nextOffset: start > 0 ? offset + messages.length : null,
+  };
 }
 
 async function readJson(req: IncomingMessage, limit: number) {
@@ -466,6 +598,13 @@ function publicError(error: unknown) {
     return { code: error.code, message: error.message };
   }
   return { code: "AMP_API_ERROR", message: "Amp companion failed." };
+}
+
+function errorDiagnostic(error: unknown) {
+  if (error instanceof Error) {
+    return { name: error.name, message: error.message.slice(0, 500) };
+  }
+  return { name: "UnknownError", message: String(error).slice(0, 500) };
 }
 
 function runnerUnavailable(error: unknown) {
