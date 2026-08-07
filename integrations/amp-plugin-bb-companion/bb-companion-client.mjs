@@ -12,7 +12,7 @@ const timer = setTimeout(
       status: 504,
       body: { code: "TIMEOUT", message: "Client input timed out." },
     }),
-  5_000,
+  30_000,
 );
 
 lines.once("line", async (line) => {
@@ -88,6 +88,7 @@ function validate(value) {
 
 function finish(value) {
   const encoded = Buffer.from(JSON.stringify(value), "utf8").toString("base64");
-  process.stdout.write(`${RESPONSE_MARKER}${encoded}\n`);
-  process.exit(0);
+  process.stdout.write(`${RESPONSE_MARKER}${encoded}\n`, () => {
+    setTimeout(() => process.exit(0), 15_000);
+  });
 }
