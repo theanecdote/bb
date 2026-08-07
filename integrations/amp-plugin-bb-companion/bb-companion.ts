@@ -72,18 +72,78 @@ export default async function plugin(amp: PluginAPI) {
     );
   });
 
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(config.port, LOOPBACK_HOST, () => {
-      server.off("error", reject);
-      resolve();
-    });
-  });
+  try {
+    await listen(server, config.port);
+  } catch (error) {
+    if (
+      addressInUse(error) &&
+      (await isAuthenticatedCompanionListening(config.port, config.secret))
+    ) {
+      amp.logger.log(
+        `bb-companion using existing authenticated listener on ${LOOPBACK_HOST}:${config.port}`,
+      );
+      return;
+    }
+    throw error;
+  }
 
   amp.logger.log(`bb-companion listening on ${LOOPBACK_HOST}:${config.port}`);
   amp.onDispose(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
+}
+
+function listen(server: ReturnType<typeof createServer>, port: number) {
+  return new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, LOOPBACK_HOST, () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+}
+
+export async function isAuthenticatedCompanionListening(
+  port: number,
+  secret: string,
+) {
+  if (secret.length < 24) return false;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      const response = await fetch(
+        `http://${LOOPBACK_HOST}:${port}/v1/threads/not-a-thread`,
+        {
+          method: "GET",
+          headers: {
+            authorization: `Bearer ${secret}`,
+            accept: "application/json",
+          },
+          signal: AbortSignal.timeout(1_000),
+        },
+      );
+      const body: unknown = await response.json();
+      return (
+        response.status === 404 &&
+        isRecord(body) &&
+        body.code === "INVALID_REQUEST"
+      );
+    } catch {
+      if (attempt < 4) await delay(50);
+    }
+  }
+  return false;
+}
+
+function addressInUse(error: unknown) {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error as Error & { code?: string }).code === "EADDRINUSE"
+  );
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function readProtectedConfig() {
