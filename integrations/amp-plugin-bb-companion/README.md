@@ -110,6 +110,7 @@ Allowed endpoints only:
 POST /v1/threads
 POST /v1/threads/:id/messages
 GET  /v1/threads/:id
+GET  /v1/threads/:id/messages?offset=0
 POST /v1/threads/:id/cancel
 ```
 
@@ -123,6 +124,15 @@ Every request requires:
 
 Runner IDs are validated against `allowedRunners`. A BB-supplied runner ID is
 never trusted by itself.
+
+The messages endpoint reads bounded pages from stable
+`PluginThread.messages()`. It returns only user/assistant text blocks and omits
+thinking, tool calls, and tool results. Amp remains authoritative; the bridge
+does not persist a transcript. Amp currently permits `messages()` only for a
+connected thread, so the companion retains at most 100 normalized text messages
+in memory for threads used during its current process lifetime. This fallback
+is lost on companion reload and does not provide retrospective access to an
+already-sleeping thread.
 
 ## Verification
 

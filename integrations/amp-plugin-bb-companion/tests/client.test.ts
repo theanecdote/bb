@@ -35,7 +35,7 @@ describe("companion host client", () => {
       await waitFor(() => output.includes("BB_AMP_READY"));
       const input = {
         method: "GET",
-        path: "/v1/threads/T-test",
+        path: "/v1/threads/T-test/messages?offset=20",
         port: address.port,
         secret,
       };
