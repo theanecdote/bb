@@ -90,12 +90,14 @@ Install this local file:
 ```sh
 mkdir -p ~/.config/amp/plugins
 cp /home/exedev/amp-plugin-bb-companion/bb-companion.ts ~/.config/amp/plugins/bb-companion.ts
+cp /home/exedev/amp-plugin-bb-companion/bb-companion-client.mjs ~/.config/amp/plugins/bb-companion-client.mjs
 ```
 
 The companion binds only `127.0.0.1` on the configured port. It never binds
-`0.0.0.0` and does not use an exe.dev public share. A remote BB server reaches
-the port only through BB's enrolled-machine shared-port transport; Bearer
-authentication remains mandatory at the companion.
+`0.0.0.0` and does not use an exe.dev public share. A remote BB server uses its
+stable enrolled-host terminal API to invoke `bb-companion-client.mjs`, which
+accepts one stdin request and can forward only the narrow companion routes.
+Bearer authentication remains mandatory at the companion.
 
 ## API
 

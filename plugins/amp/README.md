@@ -24,6 +24,7 @@ Set:
       "runnerId": "ice-by-snowboard",
       "bbHostId": "host_...",
       "repoRoot": "/home/exedev",
+      "companionClientPath": "/home/exedev/.config/amp/plugins/bb-companion-client.mjs",
       "repoRemote": "optional remote URL"
     }
   ]
@@ -47,10 +48,12 @@ Reload after config changes:
 bb plugin reload amp
 ```
 
-The BB server declares this loopback port through the selected target's
-enrolled-machine shared-port transport. The companion itself remains bound to
-`127.0.0.1`; the BB tunnel is the only remote path, and every request still
-requires the companion Bearer secret.
+The BB server uses the stable `bb.sdk.terminals` host scope to launch the fixed
+companion client on the enrolled machine. The client accepts one framed request
+on stdin, forwards it to `127.0.0.1`, emits one framed JSON response, and exits.
+It cannot execute a caller-supplied command or target a non-companion route.
+Every request still requires the companion Bearer secret. No public share is
+created.
 
 ## Behavior
 
