@@ -13,8 +13,6 @@ var __export = (target, all) => {
 // server.ts
 import { defineRpcContract } from "@bb/plugin-sdk";
 import { randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 
 // node_modules/zod/v4/classic/external.js
 var external_exports = {};
@@ -14593,7 +14591,6 @@ function buildSharedPortUrl(label, baseDomain, port, path) {
 }
 
 // server.ts
-var execFileAsync = promisify(execFile);
 var rpcErrorSchema = external_exports.object({
   code: external_exports.string(),
   message: external_exports.string()
@@ -14773,8 +14770,8 @@ async function resolveContext(bb, settings, threadId) {
   const environment = await bb.sdk.environments.get({ environmentId: thread.environmentId });
   if (environment.path === null) throw new Error("This BB environment has no checkout path.");
   const project = await bb.sdk.projects.get({ projectId: thread.projectId });
-  const repoPath = await realpath(environment.path);
-  const repo = await repoFacts(repoPath);
+  const repoPath = environment.path;
+  const repo = await repoFacts(bb, thread.environmentId, repoPath, project.gitRemoteUrl);
   return { values, targets: config2.targets, thread, environment, project, repoPath, repo, dirty: repo.dirty };
 }
 async function sendBlockReason(ctx, target, alreadyLinked) {
@@ -14812,28 +14809,22 @@ async function buildHandoffPacket(bb, threadId, ctx, target) {
     "Verify assumptions against the current checkout."
   ].join("\n");
 }
-async function repoFacts(repoPath) {
-  const [branch, head, status, remote] = await Promise.all([
-    git(repoPath, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => null),
-    git(repoPath, ["rev-parse", "HEAD"]).catch(() => null),
-    git(repoPath, ["status", "--porcelain"]).catch(() => ""),
-    git(repoPath, ["config", "--get", "remote.origin.url"]).catch(() => null)
-  ]);
+async function repoFacts(bb, environmentId, repoPath, remote) {
+  const status = await bb.sdk.environments.status({ environmentId });
+  if (status.outcome === "unavailable") {
+    throw new Error(`BB could not inspect this checkout: ${status.failure.message}`);
+  }
+  const workspace = status.outcome === "available" ? status.workspace : null;
+  const checkout = workspace?.checkout;
+  const branch = checkout?.kind === "branch" || checkout?.kind === "unborn" ? checkout.branchName : null;
+  const head = checkout?.kind === "branch" || checkout?.kind === "detached" ? checkout.headSha : null;
   return {
     path: repoPath,
-    branch: branch?.trim() || null,
-    head: head?.trim() || null,
-    dirty: status.trim().length > 0,
-    remoteHash: remote === null ? null : hashRemote(remote.trim())
+    branch,
+    head,
+    dirty: workspace?.workingTree.hasUncommittedChanges ?? false,
+    remoteHash: remote === null ? null : hashRemote(remote)
   };
-}
-async function git(cwd, args) {
-  const { stdout } = await execFileAsync("git", args, { cwd, timeout: 5e3, maxBuffer: 1024 * 1024 });
-  return stdout;
-}
-async function realpath(path) {
-  const { stdout } = await execFileAsync("realpath", [path], { timeout: 5e3 });
-  return stdout.trim();
 }
 async function getLink(bb, threadId) {
   const raw = await bb.storage.kv.get(`link:${threadId}`);
