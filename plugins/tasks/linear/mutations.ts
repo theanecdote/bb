@@ -71,6 +71,7 @@ export interface LinearMutationBridge {
   recordSyncDiagnostic(
     code: "LINEAR_MAPPING_ERROR" | "LINEAR_RATE_LIMITED" | "LINEAR_API_ERROR",
     message: string,
+    retryAt?: string,
   ): void;
 }
 
@@ -181,8 +182,9 @@ export function createLinearMutationBridge(deps: {
       try {
         const runtime = await snapshot();
         const input: LinearIssueUpdate = {};
-        if (patch.title !== undefined && patch.title !== current.title)
-          input.title = patch.title;
+        const normalizedTitle = patch.title?.trim();
+        if (normalizedTitle !== undefined && normalizedTitle !== current.title)
+          input.title = normalizedTitle;
         if (
           patch.description !== undefined &&
           patch.description !== current.description
@@ -271,14 +273,13 @@ export function createLinearMutationBridge(deps: {
     isMappedTask: (taskId) =>
       deps.mappings.getIssueMappingByTask(taskId) !== undefined,
     isMappedProject: (projectId) => deps.mappings.isMappedProject(projectId),
-    recordSyncDiagnostic(code, message) {
+    recordSyncDiagnostic(code, message, retryAt) {
       const previous = deps.mappings.getSyncState();
       deps.mappings.updateSyncState({
         ...previous,
-        lastAttemptAt: new Date().toISOString(),
         lastError: message,
         lastErrorCode: code,
-        retryAt: null,
+        retryAt: retryAt ?? previous.retryAt,
       });
     },
   };

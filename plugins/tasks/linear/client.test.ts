@@ -107,6 +107,23 @@ describe("Linear GraphQL client", () => {
     );
   });
 
+  it("clamps untrusted rate limit reset headers to one hour", async () => {
+    const now = Date.now();
+    const client = createLinearClient({
+      apiKey: "secret",
+      fetch: async () =>
+        response({ errors: [{ extensions: { code: "RATELIMITED" } }] }, 400, {
+          "X-RateLimit-Requests-Reset": String(now + 24 * 60 * 60_000),
+        }),
+    });
+    const error = await client
+      .viewerAssignedIssues()
+      .catch((value: unknown) => value);
+    expect((error as LinearApiError).retryAt?.getTime()).toBeLessThanOrEqual(
+      now + 60 * 60_000 + 1_000,
+    );
+  });
+
   it("classifies documented GraphQL authentication failures internally", async () => {
     const client = createLinearClient({
       apiKey: "secret",

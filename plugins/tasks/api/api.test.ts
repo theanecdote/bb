@@ -302,7 +302,7 @@ describe("Tasks RPC domain API", () => {
       attachmentId: string;
     };
     store.tasks.updateTask(task.id, {
-      description: `![diagram](${buildAttachmentUrl(attachmentId)})`,
+      description: `![diagram](${buildAttachmentUrl(attachmentId, "tasks")})`,
     });
     const signalsBeforeConflict = harness.realtimeSignals.length;
 

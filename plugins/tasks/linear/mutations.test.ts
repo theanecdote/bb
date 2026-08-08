@@ -228,6 +228,41 @@ describe("LinearMutationBridge", () => {
     });
   });
 
+  it("normalizes mapped titles before comparing and writing to Linear", async () => {
+    const h = setup();
+    await h.bridge.prepareTaskMutation(h.task, { title: "  After  " }, "user");
+    expect(h.client.updateIssue).toHaveBeenCalledWith("issue", {
+      title: "After",
+    });
+  });
+
+  it("records mutation diagnostics without erasing sync retry state", () => {
+    const h = setup();
+    h.mappings.updateSyncState({
+      viewerName: "Viewer",
+      activeIssueCount: 4,
+      lastSuccessfulSyncAt: "2026-08-08T00:00:00.000Z",
+      lastAttemptAt: "2026-08-08T00:05:00.000Z",
+      lastError: "Linear is rate limited. Try again later.",
+      lastErrorCode: "LINEAR_RATE_LIMITED",
+      retryAt: "2026-08-08T01:00:00.000Z",
+    });
+
+    h.bridge.recordSyncDiagnostic(
+      "LINEAR_RATE_LIMITED",
+      "A mapped write was rate limited.",
+      "2026-08-08T02:00:00.000Z",
+    );
+
+    expect(h.mappings.getSyncState()).toEqual({
+      lastSuccessfulSyncAt: "2026-08-08T00:00:00.000Z",
+      lastAttemptAt: "2026-08-08T00:05:00.000Z",
+      lastError: "A mapped write was rate limited.",
+      lastErrorCode: "LINEAR_RATE_LIMITED",
+      retryAt: "2026-08-08T02:00:00.000Z",
+    });
+  });
+
   it("writes user comments only and rejects mapped attachment references", async () => {
     const h = setup();
     await expect(

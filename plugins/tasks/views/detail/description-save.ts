@@ -144,6 +144,11 @@ export function createDescriptionSaver(
         const inFlight = draft.inFlight;
         void inFlight.then(() => {
           if (pending.get(taskId) !== draft) return;
+          const retryDelay = (draft.retryNotBefore ?? 0) - Date.now();
+          if (retryDelay > 0) {
+            arm(draft, retryDelay);
+            return;
+          }
           draft.cancelTimer?.();
           draft.cancelTimer = undefined;
           void runSave(draft);

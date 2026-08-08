@@ -142,12 +142,14 @@ const QUERIES = {
 } as const;
 
 function retryAt(headers: Headers): Date | undefined {
+  const now = Date.now();
+  const maximum = now + 60 * 60_000;
   const candidates: number[] = [];
   const retry = headers.get("retry-after");
   if (retry) {
     const seconds = Number(retry);
     const value = Number.isFinite(seconds)
-      ? Date.now() + seconds * 1000
+      ? now + seconds * 1000
       : Date.parse(retry);
     if (Number.isFinite(value)) candidates.push(value);
   }
@@ -161,7 +163,9 @@ function retryAt(headers: Headers): Date | undefined {
     const value = Number(raw);
     if (Number.isFinite(value)) candidates.push(value);
   }
-  return candidates.length ? new Date(Math.max(...candidates)) : undefined;
+  return candidates.length
+    ? new Date(Math.min(Math.max(...candidates), maximum))
+    : undefined;
 }
 
 export function createLinearClient(

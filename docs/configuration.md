@@ -538,9 +538,11 @@ path installs remain available directly through `bb plugin install ./path` or
 ### Tasks Linear integration
 
 The Tasks plugin's `linearApiKey` setting is a secret personal Linear API key.
-Configure it through Extensions → Plugins or `bb plugin config tasks set
-linearApiKey <value>`; it is consumed only by backend synchronization and is
-never accepted by `bb tasks linear status|sync` or included in their output.
+Configure it through Extensions → Plugins. It is consumed only by backend
+synchronization and is never accepted by `bb tasks linear status|sync` or
+included in their output. Do not pass the key on a command line, where shell
+history and process inspection can expose it. The deployed plugin id is
+`tasks-linear` when using the standalone distribution described below.
 `LINEAR_SMOKE_API_KEY` is reserved for the opt-in, read-only developer smoke
 test; production does not read it.
 

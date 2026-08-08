@@ -86,7 +86,7 @@ function escapeRegExp(value: string): string {
 export function removeAttachmentDescriptionReferences(
   markdown: string,
   attachmentId: string,
-  pluginId = "tasks",
+  pluginId: string,
 ): string {
   const url = escapeRegExp(buildAttachmentUrl(attachmentId, pluginId));
   return markdown.replace(new RegExp(`!\\[[^\\]]*\\]\\(${url}\\)`, "g"), "");
@@ -358,7 +358,7 @@ async function persistAttachment(
 
 export function buildAttachmentUrl(
   attachmentId: string,
-  pluginId = "tasks",
+  pluginId: string,
 ): string {
   return `/api/v1/plugins/${encodeURIComponent(pluginId)}/http${DOWNLOAD_PATH}?attachmentId=${encodeURIComponent(attachmentId)}`;
 }

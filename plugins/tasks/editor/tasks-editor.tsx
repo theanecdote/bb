@@ -568,10 +568,20 @@ export function TasksEditor({
     }
   };
 
+  const reportExternalBlur = (event: React.FocusEvent<HTMLDivElement>) => {
+    const next = event.relatedTarget;
+    if (
+      next instanceof Node &&
+      (event.currentTarget.contains(next) || bubbleRef.current?.contains(next))
+    )
+      return;
+    onBlur?.();
+  };
+
   return (
     <div
       ref={wrapperRef}
-      onBlur={onBlur}
+      onBlur={reportExternalBlur}
       className={cn("bb-tasks-editor relative min-w-0", className)}
       data-variant={variant}
       onMouseDown={variant === "doc" ? focusOnEmptyMouseDown : undefined}

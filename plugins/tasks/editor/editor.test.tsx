@@ -127,7 +127,9 @@ describe("mention extension", () => {
                 key: "TSK-7",
                 title: "Detail panel",
               },
-            ].filter((item) => item.key.toLowerCase().includes(query.toLowerCase())),
+            ].filter((item) =>
+              item.key.toLowerCase().includes(query.toLowerCase()),
+            ),
           )
         }
         onEditorReady={(editor) => {
@@ -202,9 +204,7 @@ describe("mention extension", () => {
       ),
     );
     expect(
-      screen.container.querySelector(
-        '[data-thread-mention="thr_a82u8wp8qq"]',
-      ),
+      screen.container.querySelector('[data-thread-mention="thr_a82u8wp8qq"]'),
     ).toBeTruthy();
   });
 });
@@ -262,7 +262,11 @@ describe("heading toggle", () => {
   }
 
   /** Puts a text selection inside the (1-based) nth block, or across two. */
-  function selectBlocks(editor: Editor, fromBlock: number, toBlock = fromBlock) {
+  function selectBlocks(
+    editor: Editor,
+    fromBlock: number,
+    toBlock = fromBlock,
+  ) {
     const positions: number[] = [];
     editor.state.doc.forEach((_node, offset) => {
       positions.push(offset + 2); // one char into the block's text
@@ -328,6 +332,24 @@ describe("heading toggle", () => {
 });
 
 describe("TasksEditor component", () => {
+  it("does not report blur while focus remains inside the editor", () => {
+    const onBlur = vi.fn();
+    const screen = render(
+      <TasksEditor value="text" onChange={() => undefined} onBlur={onBlur} />,
+    );
+    const wrapper = screen.container.querySelector(
+      ".bb-tasks-editor",
+    ) as HTMLElement;
+    const surface = screen.container.querySelector(".tiptap") as HTMLElement;
+    const internalButton = document.createElement("button");
+    wrapper.append(internalButton);
+
+    fireEvent.blur(surface, { relatedTarget: internalButton });
+    expect(onBlur).not.toHaveBeenCalled();
+    fireEvent.blur(surface, { relatedTarget: document.body });
+    expect(onBlur).toHaveBeenCalledOnce();
+  });
+
   it("renders checklists and reports checkbox toggles as markdown", async () => {
     const onChange = vi.fn();
     const screen = render(

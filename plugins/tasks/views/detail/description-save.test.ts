@@ -172,7 +172,9 @@ describe("createDescriptionSaver", () => {
     async (_kind, delayMs, retryFloorMs) => {
       let releaseFirst: (() => void) | undefined;
       const save = vi
-        .fn<(taskId: string, markdown: string) => Promise<DescriptionSaveOutcome>>()
+        .fn<
+          (taskId: string, markdown: string) => Promise<DescriptionSaveOutcome>
+        >()
         .mockImplementationOnce(
           () =>
             new Promise<DescriptionSaveOutcome>((resolve) => {
@@ -198,4 +200,37 @@ describe("createDescriptionSaver", () => {
       expect(saver.hasPending()).toBe(false);
     },
   );
+
+  it("honors a retry floor established while flush waits for an in-flight save", async () => {
+    let rejectFirst: ((error: Error) => void) | undefined;
+    const save = vi
+      .fn<
+        (taskId: string, markdown: string) => Promise<DescriptionSaveOutcome>
+      >()
+      .mockImplementationOnce(
+        () =>
+          new Promise<DescriptionSaveOutcome>((_resolve, reject) => {
+            rejectFirst = reject;
+          }),
+      )
+      .mockResolvedValue({ ok: true });
+    const { saver } = setup(save);
+
+    saver.onChange("task", "v1", MAPPED_DELAY, MAPPED_DELAY);
+    await vi.advanceTimersByTimeAsync(MAPPED_DELAY);
+    saver.onChange("task", "v2", MAPPED_DELAY, MAPPED_DELAY);
+    await vi.advanceTimersByTimeAsync(MAPPED_DELAY);
+    saver.flush("task");
+
+    rejectFirst?.(new Error("rate limited"));
+    await settle();
+    expect(save.mock.calls).toEqual([["task", "v1"]]);
+    await vi.advanceTimersByTimeAsync(MAPPED_DELAY - 1);
+    expect(save).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(save.mock.calls).toEqual([
+      ["task", "v1"],
+      ["task", "v2"],
+    ]);
+  });
 });

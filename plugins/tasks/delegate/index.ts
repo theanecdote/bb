@@ -401,6 +401,7 @@ export function handlers(
               ? "LINEAR_RATE_LIMITED"
               : "LINEAR_MAPPING_ERROR",
             "A delegated thread was attached, but its mapped Linear status could not be updated. Reconcile the mapping and retry synchronization.",
+            error.retryAt,
           );
           createSystemComment(store.tasks, {
             taskId: task.id,

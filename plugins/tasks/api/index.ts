@@ -722,8 +722,33 @@ export function registerHandlers(
   },
 ): PluginRpcHandlers<typeof tasksRpcContract> {
   return {
-    linearStatus: async () => await linear!.status(),
-    linearSyncNow: async () => await linear!.sync(),
+    linearStatus: async () =>
+      linear
+        ? await linear.status()
+        : {
+            configured: false,
+            syncing: false,
+            viewerName: null,
+            activeIssueCount: 0,
+            lastSuccessfulSyncAt: null,
+            lastAttemptAt: null,
+            lastError: null,
+            retryAt: null,
+          },
+    linearSyncNow: async () =>
+      linear
+        ? await linear.sync()
+        : {
+            ok: false as const,
+            createdProjects: 0,
+            createdTasks: 0,
+            updatedTasks: 0,
+            deactivatedTasks: 0,
+            error: {
+              code: "LINEAR_API_ERROR" as const,
+              message: "Linear is not configured.",
+            },
+          },
     pluginTransport() {
       const pluginBaseUrl = `/api/v1/plugins/${encodeURIComponent(bb.pluginId)}`;
       return {

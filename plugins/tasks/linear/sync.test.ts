@@ -110,6 +110,10 @@ describe("Linear projection and reconciliation", () => {
       error: { code: "LINEAR_MAPPING_ERROR" },
     });
     expect(h.store.tasks.listProjects()).toHaveLength(0);
+    expect(h.service.getStatus()).toMatchObject({
+      viewerName: null,
+      activeIssueCount: 0,
+    });
   });
 
   it("rejects local prefix drift but adopts a remote team name change", async () => {

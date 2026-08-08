@@ -186,9 +186,9 @@ export function createLinearSyncService(
         typeof deps.client === "function" ? await deps.client() : deps.client;
       // All network work and all validation happen before the first mutation.
       const snapshot = await client.viewerAssignedIssues(signal);
+      validateSnapshot(snapshot.issues);
       viewerName = snapshot.viewerName;
       activeIssueCount = snapshot.issues.length;
-      validateSnapshot(snapshot.issues);
       const activeIds = new Set(snapshot.issues.map((issue) => issue.id));
       const missing = deps.mappings
         .listActiveIssueMappings()
