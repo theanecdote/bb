@@ -8,12 +8,15 @@ named Amp Runner.
 
 ## Source And Trust
 
-Use `amp-acp` version 0.9.0 from the curated ACP Registry. The adapter is a
-third-party project, not an Amp-owned component. Download the Registry's
-Linux x64 binary distribution and verify its published SHA-256 before
-installation.
+Use the curated ACP Registry `amp-acp` 0.9.0 Linux x64 binary only as the
+verified baseline and rollback artifact. The adapter is a third-party project,
+not an Amp-owned component. Verify the Registry archive SHA-256 before
+preserving it as `/home/exedev/.local/bin/amp-acp.registry-0.9.0`.
 
-Install the verified binary at:
+The final runtime installation is the approved patched source build from
+upstream commit `68f0a16ebd437e51c9bf4d7a2b47c981010dc9a1` and
+`integrations/amp-acp/patches/0001-bb-session-load.patch`, built with pinned
+Bun for `bun-linux-x64` and installed at:
 
 ```text
 /home/exedev/.local/bin/amp-acp
@@ -57,6 +60,11 @@ On Linux the mapping is stored below
 validated session, uses the load request's current cwd and MCP server list,
 and continues the saved Amp thread. No prompts, responses, transcripts, MCP
 configuration, credentials, or modes are persisted.
+
+This is a BB-specific `session/load` resume shim, not a general ACP
+load-history implementation. It restores only Amp execution context and
+deliberately emits no historical `session/update` notifications: BB owns the
+conversation timeline, and an adapter-side transcript mirror is prohibited.
 
 ## Architecture
 
@@ -146,6 +154,7 @@ Amp CLI.
 ## Failure And Rollback
 
 If binary verification, ACP initialization, provider discovery, or the smoke
-test fails, remove only the new `customAcpAgents` entry, refresh BB
-configuration, and remove the installed `amp-acp` binary. Do not restart or
+test fails, restore the verified Registry baseline with
+`install -m 0755 /home/exedev/.local/bin/amp-acp.registry-0.9.0 /home/exedev/.local/bin/amp-acp`.
+Do not remove or refresh the provider configuration, and do not restart or
 modify the existing Amp Runner or companion.

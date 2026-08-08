@@ -7,6 +7,11 @@ It persists only `{ version, sessionId, threadId }`, allowing the new process
 to invoke `amp threads continue <threadId>` without storing prompts,
 responses, MCP configuration, credentials, or transcripts.
 
+This is a BB-specific resume shim, not a general ACP load-history
+implementation. It restores Amp execution context only and deliberately emits
+no historical `session/update` notifications. BB already owns the conversation
+timeline and does not require an adapter-side transcript mirror.
+
 - Upstream: `https://github.com/tao12345666333/amp-acp`
 - Source commit: `68f0a16ebd437e51c9bf4d7a2b47c981010dc9a1`
 - Registry archive: `amp-acp` 0.9.0 Linux x86_64
@@ -21,9 +26,9 @@ npx --yes bun@1.2.20 install
 npx --yes bun@1.2.20 build src/index.ts --compile --target=bun-linux-x64 --outfile dist/amp-acp
 ```
 
-Install `dist/amp-acp` at `/home/exedev/.local/bin/amp-acp` with mode `0755`.
-The verified Registry binary is retained at
-`/home/exedev/.local/bin/amp-acp.registry-0.9.0` for rollback.
+Install the patched `dist/amp-acp` at `/home/exedev/.local/bin/amp-acp` with
+mode `0755`. The Registry binary is used only as the verified baseline and is
+retained at `/home/exedev/.local/bin/amp-acp.registry-0.9.0` for rollback.
 
 On Linux, minimal mappings live at
 `${XDG_STATE_HOME:-$HOME/.local/state}/amp-acp/sessions`. The directory is

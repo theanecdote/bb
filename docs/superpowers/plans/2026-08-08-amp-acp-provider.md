@@ -265,13 +265,22 @@ source/test-only patch is
 had an in-memory `sessionId -> threadId` map only, so it started a replacement
 Amp session after the subprocess boundary.
 
-**Implementation contract:** Advertise and implement stable ACP `session/load`.
+**Implementation contract:** Advertise and implement the BB-specific
+`session/load` resume shim. It is not a general ACP load-history
+implementation: it restores Amp execution context only and deliberately emits
+no historical `session/update` notifications because BB owns the timeline.
 Persist only the versioned `{ sessionId, threadId }` mapping after the first
 validated Amp `T-...` ID is observed. On Linux, store it atomically under
 `${XDG_STATE_HOME:-$HOME/.local/state}/amp-acp/sessions` with directory mode
 `0700` and file mode `0600`. Reject unsafe, missing, malformed, and mismatched
 records. On load, use the request's current cwd and MCP server list; the next
 prompt must pass the saved exact thread ID to `amp threads continue`.
+
+**Review regression:** A non-empty MCP characterization test must create the
+original session with one configuration and load it with another, then assert
+the resumed prompt receives only the current load request's converted
+`options.mcpConfig`. This behavior requires no production change when the
+test first passes.
 
 **Verification:** Use TDD RED/GREEN source tests, all source unit tests,
 TypeScript lint, compiled binary tests, patched-binary initialization, and one
