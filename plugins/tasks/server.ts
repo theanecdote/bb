@@ -27,18 +27,25 @@ function statusPayload() {
 export default async function plugin(bb: BbPluginApi) {
   bb.log.info(`${TASKS_PLUGIN_NAME} ${TASKS_PLUGIN_VERSION} loaded`);
 
+  const database = bb.storage.database();
   let mappings: ReturnType<typeof createLinearMappingStore> | undefined;
   const store = createStore(
     bb,
     (taskId) => mappings?.getIssueMappingByTask(taskId) !== undefined,
     (taskIds) => {
       const result = new Map<string, { identifier: string; url: string }>();
-      for (const [taskId, mapping] of mappings?.getIssueMappingsByTasks(taskIds) ?? [])
-        result.set(taskId, { identifier: mapping.identifier, url: mapping.url });
+      for (const [taskId, mapping] of mappings?.getIssueMappingsByTasks(
+        taskIds,
+      ) ?? [])
+        result.set(taskId, {
+          identifier: mapping.identifier,
+          url: mapping.url,
+        });
       return result;
     },
+    database,
   );
-  mappings = createLinearMappingStore(bb.storage.database());
+  mappings = createLinearMappingStore(database);
   const linear = registerLinearIntegration(bb, store, mappings);
   const domain = registerTasksApi(bb, store, linear.mutations, linear);
   registerAttachments(bb, store.tasks, { mutations: linear.mutations });

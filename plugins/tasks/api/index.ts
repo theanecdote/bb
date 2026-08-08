@@ -84,8 +84,10 @@ export function createStore(
   linearSources: (
     taskIds: readonly string[],
   ) => Map<string, { identifier: string; url: string }> = () => new Map(),
+  database: ReturnType<
+    BbPluginApi["storage"]["database"]
+  > = bb.storage.database(),
 ): TasksApiStore {
-  const database = bb.storage.database();
   const tasks = createTasksStore(database);
 
   return {

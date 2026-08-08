@@ -1,15 +1,26 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createFakePluginHost } from "@bb/plugin-sdk/testing";
 import plugin, { TASKS_PLUGIN_VERSION } from "./server";
 
 describe("Tasks plugin scaffold", () => {
   it("registers the CLI and RPC surfaces after opening plugin storage", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
+    const database = bb.storage.database();
+    const databaseSpy = vi
+      .spyOn(bb.storage, "database")
+      .mockReturnValue(database);
 
     await plugin(bb);
 
-    expect(harness.registrations.services.map(({ name }) => name)).toContain("linear-sync");
-    expect(harness.registrations.settingsDescriptors.linearApiKey).toMatchObject({ secret: true });
+    // Tasks and Linear share one connection; the other two belong to independent subsystems.
+    expect(databaseSpy).toHaveBeenCalledTimes(3);
+
+    expect(harness.registrations.services.map(({ name }) => name)).toContain(
+      "linear-sync",
+    );
+    expect(
+      harness.registrations.settingsDescriptors.linearApiKey,
+    ).toMatchObject({ secret: true });
 
     expect(harness.logEntries).toEqual([
       {
