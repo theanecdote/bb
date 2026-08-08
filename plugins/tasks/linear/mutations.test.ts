@@ -73,6 +73,7 @@ function setup() {
     store,
     mappings,
     task,
+    updated,
     client,
     bridge: createLinearMutationBridge({ client, mappings }),
   };
@@ -99,10 +100,75 @@ describe("LinearMutationBridge", () => {
 
   it("clears cached workflow states when credentials rotate", async () => {
     const h = setup();
-    await h.bridge.prepareTaskMutation(h.task, { status: "in_review" }, "agent");
+    await h.bridge.prepareTaskMutation(
+      h.task,
+      { status: "in_review" },
+      "agent",
+    );
     h.bridge.clearWorkflowStateCache();
-    await h.bridge.prepareTaskMutation(h.task, { status: "in_review" }, "agent");
+    await h.bridge.prepareTaskMutation(
+      h.task,
+      { status: "in_review" },
+      "agent",
+    );
     expect(h.client.teamStates).toHaveBeenCalledTimes(2);
+  });
+
+  it("binds overlapping state lookup and mutation to one client generation", async () => {
+    const h = setup();
+    let releaseOld!: (
+      states: Awaited<ReturnType<LinearClient["teamStates"]>>,
+    ) => void;
+    vi.mocked(h.client.teamStates).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseOld = resolve;
+        }),
+    );
+    const newClient: LinearClient = {
+      ...h.client,
+      teamStates: vi.fn(async () => [
+        { id: "new-review", name: "In Review", type: "started", position: 1 },
+      ]),
+      updateIssue: vi.fn(async () => ({
+        ...h.updated,
+        state: {
+          id: "new-review",
+          name: "In Review",
+          type: "started",
+          position: 1,
+        },
+      })),
+    };
+    let runtime = { generation: 1, client: h.client };
+    const bridge = createLinearMutationBridge({
+      client: async () => runtime,
+      mappings: h.mappings,
+    });
+
+    const first = bridge.prepareTaskMutation(
+      h.task,
+      { status: "in_review" },
+      "agent",
+    );
+    await vi.waitFor(() => expect(h.client.teamStates).toHaveBeenCalledOnce());
+    runtime = { generation: 2, client: newClient };
+    bridge.clearWorkflowStateCache();
+    releaseOld([
+      { id: "old-review", name: "In Review", type: "started", position: 1 },
+    ]);
+    await first;
+    expect(h.client.updateIssue).toHaveBeenCalledWith("issue", {
+      stateId: "old-review",
+    });
+    expect(newClient.updateIssue).not.toHaveBeenCalled();
+
+    await bridge.prepareTaskMutation(h.task, { status: "in_review" }, "agent");
+    expect(newClient.teamStates).toHaveBeenCalledOnce();
+    expect(newClient.updateIssue).toHaveBeenCalledWith("issue", {
+      stateId: "new-review",
+    });
+    expect(h.client.teamStates).toHaveBeenCalledOnce();
   });
 
   it("leaves BB unchanged when Linear rejects and bypasses echo for linear-sync", async () => {

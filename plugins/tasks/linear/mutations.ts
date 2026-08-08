@@ -70,6 +70,11 @@ export interface LinearMutationBridge {
   isMappedProject(projectId: string): boolean;
 }
 
+export interface LinearClientSnapshot {
+  generation: number;
+  client: LinearClient;
+}
+
 const priorityToLinear = {
   urgent: 1,
   high: 2,
@@ -88,26 +93,55 @@ const BB_ATTACHMENT_URL =
   /\/api\/v1\/plugins\/[^/]+\/http\/attachments\/download\?/iu;
 
 export function createLinearMutationBridge(deps: {
-  client: LinearClient;
+  client: LinearClient | (() => Promise<LinearClientSnapshot>);
   mappings: LinearMappingStore;
   stateCacheMs?: number;
 }): LinearMutationBridge {
   const stateCache = new Map<
-    string,
-    { expiresAt: number; states: LinearWorkflowState[] }
+    number,
+    Map<string, { expiresAt: number; states: LinearWorkflowState[] }>
+  >();
+  const stateFlights = new Map<
+    number,
+    Map<string, Promise<LinearWorkflowState[]>>
   >();
   const stateCacheMs = deps.stateCacheMs ?? 5 * 60_000;
+  const snapshot = async (): Promise<LinearClientSnapshot> =>
+    typeof deps.client === "function"
+      ? deps.client()
+      : { generation: 0, client: deps.client };
 
-  const statesForTeam = async (teamId: string) => {
-    const cached = stateCache.get(teamId);
+  const statesForTeam = async (
+    runtime: LinearClientSnapshot,
+    teamId: string,
+  ) => {
+    const generationCache = stateCache.get(runtime.generation);
+    const cached = generationCache?.get(teamId);
     if (cached && cached.expiresAt > Date.now()) return cached.states;
-    const states = await deps.client.teamStates(teamId);
-    stateCache.set(teamId, { states, expiresAt: Date.now() + stateCacheMs });
+    const generationFlights = stateFlights.get(runtime.generation);
+    const existing = generationFlights?.get(teamId);
+    if (existing) return existing;
+    const flight = runtime.client
+      .teamStates(teamId)
+      .then((states) => {
+        let cache = stateCache.get(runtime.generation);
+        if (!cache) stateCache.set(runtime.generation, (cache = new Map()));
+        cache.set(teamId, { states, expiresAt: Date.now() + stateCacheMs });
     return states;
+      })
+      .finally(() => stateFlights.get(runtime.generation)?.delete(teamId));
+    let flights = stateFlights.get(runtime.generation);
+    if (!flights) stateFlights.set(runtime.generation, (flights = new Map()));
+    flights.set(teamId, flight);
+    return flight;
   };
 
-  const resolveState = async (teamId: string, status: Task["status"]) => {
-    const states = await statesForTeam(teamId);
+  const resolveState = async (
+    runtime: LinearClientSnapshot,
+    teamId: string,
+    status: Task["status"],
+  ) => {
+    const states = await statesForTeam(runtime, teamId);
     let candidates: LinearWorkflowState[];
     if (status === "in_review") {
       const exact = states.filter(
@@ -129,6 +163,7 @@ export function createLinearMutationBridge(deps: {
   return {
     clearWorkflowStateCache() {
       stateCache.clear();
+      stateFlights.clear();
     },
     async prepareTaskMutation(current, patch, origin) {
       const mapping = deps.mappings.getIssueMappingByTask(current.id);
@@ -138,6 +173,7 @@ export function createLinearMutationBridge(deps: {
         };
       }
       if (!mapping.active) throw inactiveMappingError();
+      const runtime = await snapshot();
 
       const input: LinearIssueUpdate = {};
       if (patch.title !== undefined && patch.title !== current.title)
@@ -152,7 +188,11 @@ export function createLinearMutationBridge(deps: {
       if (patch.dueDate !== undefined && patch.dueDate !== current.dueDate)
         input.dueDate = patch.dueDate;
       if (patch.status !== undefined && patch.status !== current.status) {
-        const stateId = await resolveState(mapping.linearTeamId, patch.status);
+        const stateId = await resolveState(
+          runtime,
+          mapping.linearTeamId,
+          patch.status,
+        );
         if (!stateId)
           throw new LinearMutationError(
             "linear_write_failed",
@@ -168,7 +208,7 @@ export function createLinearMutationBridge(deps: {
       }
       let issue;
       try {
-        issue = await deps.client.updateIssue(mapping.linearIssueId, input);
+        issue = await runtime.client.updateIssue(mapping.linearIssueId, input);
       } catch (error) {
         if (
           error instanceof LinearApiError &&
@@ -198,8 +238,9 @@ export function createLinearMutationBridge(deps: {
       if (mapping && origin !== "linear-sync") {
         if (!mapping.active) throw inactiveMappingError();
         if (BB_ATTACHMENT_URL.test(body)) throw new LinearAttachmentError();
+        const runtime = await snapshot();
         try {
-          await deps.client.createComment(mapping.linearIssueId, body);
+          await runtime.client.createComment(mapping.linearIssueId, body);
         } catch (error) {
           if (
             error instanceof LinearApiError &&
