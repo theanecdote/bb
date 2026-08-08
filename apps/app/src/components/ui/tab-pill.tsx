@@ -82,6 +82,7 @@ export function TabPill({
         aria-label={ariaLabel}
         aria-keyshortcuts={ariaKeyshortcuts}
         aria-pressed={isActive}
+        title={iconOnly ? title : undefined}
         className={cn(
           "flex h-full min-w-0 items-center rounded-md focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
           iconOnly ? "px-1.5" : "pl-1.5 pr-2",

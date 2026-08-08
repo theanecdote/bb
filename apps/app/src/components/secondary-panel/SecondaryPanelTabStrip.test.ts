@@ -55,13 +55,14 @@ describe("secondary panel tab-strip edge fades", () => {
       }),
     );
 
-    expect(getByRole("button", { name: "Amp" })).toBeTruthy();
-    expect(
-      getByRole("button", { name: /Terminal.*exited 1/ }),
-    ).toBeTruthy();
+    expect(getByRole("button", { name: "Amp" }).getAttribute("title")).toBe(
+      "Amp",
+    );
+    expect(getByRole("button", { name: /Terminal.*exited 1/ })).toBeTruthy();
     expect(container.querySelector(".sr-only")?.textContent).toBe("Amp");
     expect(
-      container.querySelector('[data-testid="amp-logo"]')?.parentElement?.classList,
+      container.querySelector('[data-testid="amp-logo"]')?.parentElement
+        ?.classList,
     ).toContain("!w-8");
   });
 
