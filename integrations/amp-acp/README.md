@@ -30,7 +30,7 @@ Build from a clean clone at the listed source commit:
 
 ```bash
 git apply --unidiff-zero /home/exedev/theanecdote-bb/integrations/amp-acp/patches/0001-bb-session-load.patch
-git apply /home/exedev/theanecdote-bb/integrations/amp-acp/patches/0002-amp-mode-executor.patch
+git apply --unidiff-zero /home/exedev/theanecdote-bb/integrations/amp-acp/patches/0002-amp-mode-executor.patch
 npx --yes bun@1.2.20 install
 npx --yes bun@1.2.20 build src/index.ts --compile --target=bun-linux-x64 --outfile dist/amp-acp
 ```

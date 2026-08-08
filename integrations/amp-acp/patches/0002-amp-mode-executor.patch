@@ -2,21 +2,11 @@ diff --git a/src/server.ts b/src/server.ts
 index a85b729..9c7d463 100644
 --- a/src/server.ts
 +++ b/src/server.ts
-@@ -39,6 +39,7 @@ const PACKAGE_VERSION: string = packageJson.version;
- const CONFIG_PERMISSION = 'permission';
- const CONFIG_AMP_MODE = 'amp-mode';
- const PERMISSION_MODES = ['default', 'bypass'] as const;
+@@ -41,0 +42 @@ const PERMISSION_MODES = ['default', 'bypass'] as const;
 +const AMP_EXECUTORS = ['local', 'orb'] as const;
- 
- const AMP_MODELS = [
-   {
-@@ -64,8 +65,21 @@ const AMP_MODELS = [
- ] as const;
- 
- type AmpModelId = typeof AMP_MODELS[number]['modelId'];
+@@ -66,0 +68 @@ type AmpModelId = typeof AMP_MODELS[number]['modelId'];
 +type AmpExecutor = typeof AMP_EXECUTORS[number];
- type PermissionMode = typeof PERMISSION_MODES[number];
- 
+@@ -68,0 +71,12 @@ type PermissionMode = typeof PERMISSION_MODES[number];
 +function ampSelectionId(mode: AmpModelId, executor: AmpExecutor): string {
 +  return `${mode}:${executor}`;
 +}
@@ -29,22 +19,10 @@ index a85b729..9c7d463 100644
 +  return { mode, executor: executor as AmpExecutor };
 +}
 +
- function isAmpModelId(modelId: string): modelId is AmpModelId {
-   return AMP_MODELS.some((model) => model.modelId === modelId);
- }
-@@ -74,7 +88,7 @@ function isPermissionMode(mode: string): mode is PermissionMode {
-   return PERMISSION_MODES.some((permissionMode) => permissionMode === mode);
- }
- 
+@@ -77 +91 @@ function isPermissionMode(mode: string): mode is PermissionMode {
 -function buildSessionConfigOptions(s: Pick<SessionState, 'mode' | 'model'>): SessionConfigOption[] {
 +function buildSessionConfigOptions(s: Pick<SessionState, 'mode' | 'model' | 'executor'>): SessionConfigOption[] {
-   return [
-     {
-       type: 'select',
-@@ -103,12 +117,17 @@ function buildSessionConfigOptions(s: Pick<SessionState, 'mode' | 'model'>): Ses
-       name: 'Amp Mode',
-       description: 'Select the Amp execution mode.',
-       category: 'model',
+@@ -106,6 +120,11 @@ function buildSessionConfigOptions(s: Pick<SessionState, 'mode' | 'model'>): Ses
 -      currentValue: s.model,
 -      options: AMP_MODELS.map((model) => ({
 -        value: model.modelId,
@@ -62,95 +40,40 @@ index a85b729..9c7d463 100644
 +              : `${model.description} Runs in a new Amp-managed Orb.`,
 +        })),
 +      ),
-     },
-   ];
- }
-@@ -120,6 +139,7 @@ interface SessionState {
-   active: boolean;
-   mode: PermissionMode;
-   model: AmpModelId;
+@@ -122,0 +142 @@ interface SessionState {
 +  executor: AmpExecutor;
-   mcpConfig: AmpMcpConfig;
-   cwd: string;
- }
-@@ -187,6 +207,7 @@ export class AmpAcpAgent implements Agent {
-       active: false,
-       mode: 'default',
-       model: 'medium',
+@@ -189,0 +210 @@ export class AmpAcpAgent implements Agent {
 +      executor: 'local',
-       mcpConfig,
-       cwd: params.cwd || process.cwd(),
-     };
-@@ -228,6 +249,7 @@ export class AmpAcpAgent implements Agent {
-       active: false,
-       mode: 'default',
-       model: 'medium',
+@@ -230,0 +252 @@ export class AmpAcpAgent implements Agent {
 +      executor: 'local',
-       mcpConfig: convertAcpMcpServersToAmpConfig(params.mcpServers),
-       cwd: params.cwd || process.cwd(),
-     };
-@@ -284,6 +306,7 @@ If there are Cursor rules (in .cursor/rules/ or .cursorrules), Claude rules (CLA
-       cwd: s.cwd,
-       env: { TERM: 'dumb' },
-       mode: s.model,
+@@ -286,0 +309 @@ If there are Cursor rules (in .cursor/rules/ or .cursorrules), Claude rules (CLA
 +      executor: s.executor,
-     };
- 
-     if (s.mode === 'bypass') {
-@@ -376,10 +399,12 @@ If there are Cursor rules (in .cursor/rules/ or .cursorrules), Claude rules (CLA
-         s.mode = params.value;
-         break;
-       case CONFIG_AMP_MODE:
+@@ -379 +402,2 @@ If there are Cursor rules (in .cursor/rules/ or .cursorrules), Claude rules (CLA
 -        if (!isAmpModelId(params.value)) {
 +        const selection = parseAmpSelection(params.value);
 +        if (!selection) {
-           throw new Error(`Unsupported Amp mode: ${params.value}`);
-         }
+@@ -382 +406,2 @@ If there are Cursor rules (in .cursor/rules/ or .cursorrules), Claude rules (CLA
 -        s.model = params.value;
 +        s.model = selection.mode;
 +        s.executor = selection.executor;
-         break;
-       default:
-         throw new Error(`Unsupported config option: ${params.configId}`);
 diff --git a/src/amp-transport.ts b/src/amp-transport.ts
 index 9da6711..6a27339 100644
 --- a/src/amp-transport.ts
 +++ b/src/amp-transport.ts
-@@ -22,6 +22,7 @@ export interface AmpExecutionOptions {
-   cwd: string;
-   env?: Record<string, string>;
-   mode?: 'low' | 'medium' | 'high' | 'ultra';
+@@ -24,0 +25 @@ export interface AmpExecutionOptions {
 +  executor?: 'local' | 'orb';
-   dangerouslyAllowAll?: boolean;
-   mcpConfig?: AmpMcpConfig;
-   continue?: boolean | string;
-@@ -65,6 +66,7 @@ export function buildAmpSdkOptions(options: AmpExecutionOptions): AmpOptions {
-     cwd: options.cwd,
-     env: options.env,
-     mode: options.mode,
+@@ -67,0 +69 @@ export function buildAmpSdkOptions(options: AmpExecutionOptions): AmpOptions {
 +    executor: options.continue ? undefined : options.executor,
-     noArchiveAfterExecute: true,
-     dangerouslyAllowAll: options.dangerouslyAllowAll,
-     mcpConfig: options.mcpConfig,
-@@ -82,6 +84,7 @@ export function buildAmpCliArgs(options: AmpExecutionOptions): string[] {
-   }
- 
-   args.push('--execute', '--stream-json', '--no-archive-after-execute');
+@@ -84,0 +87 @@ export function buildAmpCliArgs(options: AmpExecutionOptions): string[] {
 +  if (options.executor === 'orb' && !options.continue) args.push('--orb-execute');
-   if (options.mode) args.push('--mode', options.mode);
-   if (options.dangerouslyAllowAll) args.push('--dangerously-allow-all');
-   if (options.mcpConfig) args.push('--mcp-config', JSON.stringify(options.mcpConfig));
 diff --git a/src/acp-protocol.test.ts b/src/acp-protocol.test.ts
 index 782c55e..804c868 100644
 --- a/src/acp-protocol.test.ts
 +++ b/src/acp-protocol.test.ts
-@@ -68,12 +68,16 @@ describe('ACP Protocol End-to-End', () => {
-     expect(response.configOptions?.map((option) => option.id)).toEqual(['permission', 'amp-mode']);
-     expect(response.configOptions?.map((option) => option.category)).toEqual(['mode', 'model']);
-     expect(response.configOptions?.find((option) => option.id === 'amp-mode')).toMatchObject({
+@@ -71 +71 @@ describe('ACP Protocol End-to-End', () => {
 -      currentValue: 'medium',
 +      currentValue: 'medium:local',
-       options: [
+@@ -73,4 +73,8 @@ describe('ACP Protocol End-to-End', () => {
 -        { value: 'low', name: 'Low' },
 -        { value: 'medium', name: 'Medium' },
 -        { value: 'high', name: 'High' },
@@ -163,32 +86,17 @@ index 782c55e..804c868 100644
 +        { value: 'high:orb', name: 'High · Orb' },
 +        { value: 'ultra:local', name: 'Ultra · Machine' },
 +        { value: 'ultra:orb', name: 'Ultra · Orb' },
-       ],
-     });
-   });
-@@ -87,12 +91,12 @@ describe('ACP Protocol End-to-End', () => {
-     const result = await agentConnection.setSessionConfigOption({
-       sessionId: session.sessionId,
-       configId: 'amp-mode',
+@@ -90 +94 @@ describe('ACP Protocol End-to-End', () => {
 -      value: 'high',
 +      value: 'high:orb',
-     });
- 
-     expect(result.configOptions).toHaveLength(2);
-     expect(result.configOptions.find((option) => option.id === 'amp-mode')).toMatchObject({
+@@ -95 +99 @@ describe('ACP Protocol End-to-End', () => {
 -      currentValue: 'high',
 +      currentValue: 'high:orb',
-     });
-   });
- 
 diff --git a/src/amp-transport.test.ts b/src/amp-transport.test.ts
 index f84d4cb..7deb745 100644
 --- a/src/amp-transport.test.ts
 +++ b/src/amp-transport.test.ts
-@@ -86,6 +86,15 @@ describe('Amp transport', () => {
-     }
-   });
- 
+@@ -88,0 +89,9 @@ describe('Amp transport', () => {
 +  it('targets an Orb only for a new thread', () => {
 +    expect(buildAmpSdkOptions({ ...baseOptions, executor: 'orb' })).toMatchObject({
 +      executor: 'orb',
@@ -198,17 +106,12 @@ index f84d4cb..7deb745 100644
 +    expect(buildAmpCliArgs({ ...baseOptions, executor: 'orb', continue: 'T-existing' })).not.toContain('--orb-execute');
 +  });
 +
-   it('builds arguments for continuing a specific CLI thread', () => {
-     expect(buildAmpCliArgs({
-       ...baseOptions,
 diff --git a/src/prompt-continue.test.ts b/src/prompt-continue.test.ts
 index 786d55a..b5a8636 100644
 --- a/src/prompt-continue.test.ts
 +++ b/src/prompt-continue.test.ts
-@@ -71,6 +71,18 @@ describe('AmpAcpAgent prompt() continue option', () => {
-     expect(capturedCalls[0]!.options.mode).toBe('ultra');
-   });
- 
+@@ -72,0 +73,12 @@ describe('AmpAcpAgent prompt() continue option', () => {
++
 +  it('passes the selected Orb executor on the first prompt', async () => {
 +    const session = await agent.newSession({ cwd: '/tmp', mcpServers: [] });
 +    await agent.setSessionConfigOption({ sessionId: session.sessionId, configId: 'amp-mode', value: 'high:orb' });
@@ -220,7 +123,3 @@ index 786d55a..b5a8636 100644
 +    expect(capturedCalls).toHaveLength(1);
 +    expect(capturedCalls[0]!.options).toMatchObject({ mode: 'high', executor: 'orb' });
 +  });
-+
-   it('passes low mode to the SDK', async () => {
-     const session = await agent.newSession({ cwd: '/tmp', mcpServers: [] });
-     await agent.setSessionConfigOption({ sessionId: session.sessionId, configId: 'amp-mode', value: 'low' });
