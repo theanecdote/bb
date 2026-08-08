@@ -937,6 +937,9 @@ export function registerHandlers(
             new TasksDomainFailure({
               code: error.code,
               message: error.message,
+              ...(error instanceof LinearMutationError && error.retryAt
+                ? { retryAt: error.retryAt }
+                : {}),
             }),
           );
         }
@@ -1019,6 +1022,7 @@ export function registerHandlers(
             new TasksDomainFailure({
               code: error.code,
               message: error.message,
+              ...(error.retryAt ? { retryAt: error.retryAt } : {}),
             }),
           );
         throw error;

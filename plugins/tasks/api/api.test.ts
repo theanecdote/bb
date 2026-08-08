@@ -14,6 +14,74 @@ import { tasksRpcContract } from "../shared/contract";
 import { createComment, createStore, registerTasksApi } from ".";
 
 describe("Tasks RPC domain API", () => {
+  it("returns a typed rate limit when mapped status workflow lookup fails", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "tasks-linear" });
+    const store = createStore(bb);
+    const mappings = createLinearMappingStore(bb.storage.database());
+    const project = store.tasks.createProject({
+      name: "Mapped",
+      prefix: "MAP",
+      color: "blue",
+    });
+    const task = store.tasks.createTask({
+      projectId: project.id,
+      title: "Status",
+      status: "todo",
+    });
+    mappings.upsertTeamMapping({
+      linearTeamId: "team",
+      projectId: project.id,
+      teamKey: "MAP",
+      teamName: "Mapped",
+    });
+    mappings.upsertIssueMapping({
+      linearIssueId: "issue",
+      taskId: task.id,
+      linearTeamId: "team",
+      identifier: "MAP-1",
+      url: "https://linear.app/acme/issue/MAP-1",
+      linearStateId: "todo",
+      linearUpdatedAt: "2026-08-08T00:00:00.000Z",
+      active: true,
+    });
+    const client: LinearClient = {
+      viewerAssignedIssues: vi.fn(),
+      issuesByIds: vi.fn(),
+      teamStates: vi.fn(async () => {
+        throw new LinearApiError(
+          "LINEAR_RATE_LIMITED",
+          "Linear is rate limited. Try again later.",
+          new Date("2026-08-08T14:00:00.000Z"),
+        );
+      }),
+      updateIssue: vi.fn(),
+      createComment: vi.fn(),
+    };
+    registerTasksApi(
+      bb,
+      store,
+      createLinearMutationBridge({ client, mappings }),
+    );
+
+    const result = tasksRpcContract.updateTask.output.parse(
+      await harness.callRpc("updateTask", {
+        taskId: task.id,
+        status: "in_progress",
+      }),
+    );
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: "linear_rate_limited",
+        message: "Linear is rate limited. Try again later.",
+        retryAt: "2026-08-08T14:00:00.000Z",
+      },
+    });
+    expect(store.tasks.getTask(task.id)?.status).toBe("todo");
+    expect(client.updateIssue).not.toHaveBeenCalled();
+    await harness.dispose();
+  });
+
   it("returns safe typed Linear comment failures over the real RPC contract", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks-linear" });
     const store = createStore(bb);

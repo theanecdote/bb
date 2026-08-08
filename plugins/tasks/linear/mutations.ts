@@ -177,43 +177,44 @@ export function createLinearMutationBridge(deps: {
         };
       }
       if (!mapping.active) throw inactiveMappingError();
-      const runtime = await snapshot();
-
-      const input: LinearIssueUpdate = {};
-      if (patch.title !== undefined && patch.title !== current.title)
-        input.title = patch.title;
-      if (
-        patch.description !== undefined &&
-        patch.description !== current.description
-      )
-        input.description = patch.description;
-      if (patch.priority !== undefined && patch.priority !== current.priority)
-        input.priority = priorityToLinear[patch.priority];
-      if (patch.dueDate !== undefined && patch.dueDate !== current.dueDate)
-        input.dueDate = patch.dueDate;
-      if (patch.status !== undefined && patch.status !== current.status) {
-        const stateId = await resolveState(
-          runtime,
-          mapping.linearTeamId,
-          patch.status,
-        );
-        if (!stateId)
-          throw new LinearMutationError(
-            "linear_write_failed",
-            "No compatible Linear workflow state was found",
-          );
-        input.stateId = stateId;
-      }
-
-      if (Object.keys(input).length === 0) {
-        return {
-          commit: (store) => store.updateTaskIfChanged(current.id, patch).task,
-        };
-      }
       let issue;
       try {
+        const runtime = await snapshot();
+        const input: LinearIssueUpdate = {};
+        if (patch.title !== undefined && patch.title !== current.title)
+          input.title = patch.title;
+        if (
+          patch.description !== undefined &&
+          patch.description !== current.description
+        )
+          input.description = patch.description;
+        if (patch.priority !== undefined && patch.priority !== current.priority)
+          input.priority = priorityToLinear[patch.priority];
+        if (patch.dueDate !== undefined && patch.dueDate !== current.dueDate)
+          input.dueDate = patch.dueDate;
+        if (patch.status !== undefined && patch.status !== current.status) {
+          const stateId = await resolveState(
+            runtime,
+            mapping.linearTeamId,
+            patch.status,
+          );
+          if (!stateId)
+            throw new LinearMutationError(
+              "linear_write_failed",
+              "No compatible Linear workflow state was found",
+            );
+          input.stateId = stateId;
+        }
+
+        if (Object.keys(input).length === 0) {
+          return {
+            commit: (store) =>
+              store.updateTaskIfChanged(current.id, patch).task,
+          };
+        }
         issue = await runtime.client.updateIssue(mapping.linearIssueId, input);
       } catch (error) {
+        if (error instanceof LinearMutationError) throw error;
         if (
           error instanceof LinearApiError &&
           error.code === "LINEAR_RATE_LIMITED"

@@ -269,6 +269,7 @@ export const tasksDomainErrorSchema = z
       "mapped_attachment_forbidden",
     ]),
     message: z.string(),
+    retryAt: z.string().optional(),
   })
   .strict();
 

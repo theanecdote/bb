@@ -35,7 +35,7 @@ function createTestPreset(
 }
 
 describe("task delegation", () => {
-  it("persists a safe diagnostic when mapped status transition is rejected after attach", async () => {
+  it("recovers safely when mapped workflow lookup fails after spawn", async () => {
     const { bb, harness } = createFakePluginHost({
       pluginId: "tasks-linear",
       sdk: {
@@ -79,19 +79,21 @@ describe("task delegation", () => {
       viewerAssignedIssues: vi.fn(),
       issuesByIds: vi.fn(),
       createComment: vi.fn(),
-      teamStates: vi.fn(async () => [
-        { id: "started", name: "Started", type: "started", position: 1 },
-      ]),
-      updateIssue: vi.fn(async () => {
+      teamStates: vi.fn(async () => {
         throw new LinearApiError("LINEAR_API_ERROR", "unsafe remote detail");
       }),
+      updateIssue: vi.fn(),
     };
     const mutations = createLinearMutationBridge({ client, mappings });
     registerDelegation(bb, store, mutations);
     const preset = createTestPreset(store);
 
-    await harness.callRpc("delegate", { taskId: task.id, presetId: preset.id });
+    const result = await harness.callRpc("delegate", {
+      taskId: task.id,
+      presetId: preset.id,
+    });
 
+    expect(result).toEqual({ threadId: "thr_mapped" });
     expect(store.tasks.getTask(task.id)?.status).toBe("todo");
     expect(store.tasks.listTaskThreads(task.id)).toEqual([
       expect.objectContaining({ threadId: "thr_mapped" }),
@@ -104,6 +106,15 @@ describe("task delegation", () => {
     expect(mappings.getSyncState().lastError).not.toContain(
       "unsafe remote detail",
     );
+    expect(client.updateIssue).not.toHaveBeenCalled();
+    expect(harness.realtimeSignals).toEqual([
+      { channel: "threads:changed", payload: { taskId: task.id } },
+      {
+        channel: "tasks:changed",
+        payload: { taskId: task.id, projectId: project.id },
+      },
+      { channel: "comments:changed", payload: { taskId: task.id } },
+    ]);
     await harness.dispose();
   });
 
