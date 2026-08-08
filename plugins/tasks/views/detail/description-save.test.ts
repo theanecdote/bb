@@ -163,4 +163,39 @@ describe("createDescriptionSaver", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(save).toHaveBeenCalledTimes(2);
   });
+
+  it.each([
+    ["unmapped", UNMAPPED_DELAY, undefined],
+    ["mapped", MAPPED_DELAY, MAPPED_DELAY],
+  ])(
+    "flushes the newest %s draft after a late in-flight save resolves",
+    async (_kind, delayMs, retryFloorMs) => {
+      let releaseFirst: (() => void) | undefined;
+      const save = vi
+        .fn<(taskId: string, markdown: string) => Promise<DescriptionSaveOutcome>>()
+        .mockImplementationOnce(
+          () =>
+            new Promise<DescriptionSaveOutcome>((resolve) => {
+              releaseFirst = () => resolve({ ok: true });
+            }),
+        )
+        .mockResolvedValue({ ok: true });
+      const { saver } = setup(save);
+
+      saver.onChange("task", "v1", delayMs, retryFloorMs);
+      await vi.advanceTimersByTimeAsync(delayMs);
+      saver.onChange("task", "v2", delayMs, retryFloorMs);
+      await vi.advanceTimersByTimeAsync(delayMs); // follow-up fires during v1
+      saver.flush("task"); // unmount before v1 resolves
+
+      expect(save.mock.calls).toEqual([["task", "v1"]]);
+      releaseFirst?.();
+      await settle();
+      expect(save.mock.calls).toEqual([
+        ["task", "v1"],
+        ["task", "v2"],
+      ]);
+      expect(saver.hasPending()).toBe(false);
+    },
+  );
 });

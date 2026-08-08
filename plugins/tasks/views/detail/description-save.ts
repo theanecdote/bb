@@ -44,7 +44,7 @@ export function createDescriptionSaver(
     delayMs: number;
     retryFloorMs?: number;
     cancelTimer?: () => void;
-    inFlight: boolean;
+    inFlight?: Promise<void>;
     retryNotBefore?: number;
   }
   const pending = new Map<string, PendingDraft>();
@@ -53,58 +53,64 @@ export function createDescriptionSaver(
     draft.cancelTimer?.();
     draft.cancelTimer = schedule(() => {
       draft.cancelTimer = undefined;
+      // Do not let a follow-up timer get consumed by the write ahead of it.
+      // Keeping it armed also gives a long-running write another opportunity
+      // to settle before the newest draft is sent.
+      if (draft.inFlight !== undefined) {
+        arm(draft, delayMs);
+        return;
+      }
       void runSave(draft);
     }, delayMs);
   };
 
-  const runSave = async (draft: PendingDraft) => {
-    if (draft.inFlight || pending.get(draft.taskId) !== draft) return;
+  const runSave = (draft: PendingDraft): Promise<void> => {
+    if (pending.get(draft.taskId) !== draft) return Promise.resolve();
+    if (draft.inFlight !== undefined) return draft.inFlight;
     const attempt = draft.markdown;
-    draft.inFlight = true;
-    try {
-      const result = await options.save(draft.taskId, attempt);
-      if (result.ok) {
-        // A newer draft may have arrived while the RPC was in flight; only the
-        // attempt that was actually sent is settled.
-        if (draft.markdown === attempt) pending.delete(draft.taskId);
-      } else {
-        options.onError(result.error.message);
+    const inFlight = (async () => {
+      try {
+        const result = await options.save(draft.taskId, attempt);
+        if (result.ok) {
+          // A newer draft may have arrived while the RPC was in flight; only the
+          // attempt that was actually sent is settled.
+          if (draft.markdown === attempt) pending.delete(draft.taskId);
+        } else {
+          options.onError(result.error.message);
+          if (draft.retryFloorMs !== undefined) {
+            draft.retryNotBefore = Date.now() + draft.retryFloorMs;
+            arm(draft, draft.retryFloorMs);
+          } else if (draft.markdown === attempt) {
+            // Preserve existing local-task behavior: a handled domain rejection
+            // is settled rather than automatically retried.
+            pending.delete(draft.taskId);
+          }
+        }
+      } catch (error) {
+        options.onError(error instanceof Error ? error.message : String(error));
+        // Mapped writes have a hard minimum interval. Keep the failed draft and
+        // its original policy even if the component navigates to another task.
+        // Unmapped failures remain pending for an explicit future flush/edit,
+        // rather than entering an automatic 800ms retry loop.
         if (draft.retryFloorMs !== undefined) {
           draft.retryNotBefore = Date.now() + draft.retryFloorMs;
           arm(draft, draft.retryFloorMs);
-        } else if (draft.markdown === attempt) {
-          // Preserve existing local-task behavior: a handled domain rejection
-          // is settled rather than automatically retried.
-          pending.delete(draft.taskId);
+        }
+      } finally {
+        draft.inFlight = undefined;
+        // A newer edit must remain scheduled after every outcome, including
+        // when its earlier follow-up timer fired during this attempt.
+        if (pending.get(draft.taskId) === draft && draft.markdown !== attempt) {
+          const retryDelay = Math.max(
+            0,
+            (draft.retryNotBefore ?? 0) - Date.now(),
+          );
+          arm(draft, Math.max(draft.delayMs, retryDelay));
         }
       }
-    } catch (error) {
-      options.onError(error instanceof Error ? error.message : String(error));
-      // Mapped writes have a hard minimum interval. Keep the failed draft and
-      // its original policy even if the component navigates to another task.
-      // Unmapped failures remain pending for an explicit future flush/edit,
-      // rather than entering an automatic 800ms retry loop.
-      if (draft.retryFloorMs !== undefined) {
-        draft.retryNotBefore = Date.now() + draft.retryFloorMs;
-        arm(draft, draft.retryFloorMs);
-      }
-    } finally {
-      draft.inFlight = false;
-      // A newer edit's timer can expire while this attempt is still in flight.
-      // Re-arm it after settlement so the pending draft cannot become
-      // timerless. Respect any failure floor established above.
-      if (
-        pending.get(draft.taskId) === draft &&
-        draft.markdown !== attempt &&
-        draft.cancelTimer === undefined
-      ) {
-        const retryDelay = Math.max(
-          0,
-          (draft.retryNotBefore ?? 0) - Date.now(),
-        );
-        arm(draft, Math.max(draft.delayMs, retryDelay));
-      }
-    }
+    })();
+    draft.inFlight = inFlight;
+    return inFlight;
   };
 
   return {
@@ -114,7 +120,6 @@ export function createDescriptionSaver(
         taskId,
         markdown,
         delayMs,
-        inFlight: false,
       };
       draft.markdown = markdown;
       draft.delayMs = delayMs;
@@ -133,6 +138,18 @@ export function createDescriptionSaver(
       }
       draft.cancelTimer?.();
       draft.cancelTimer = undefined;
+      if (draft.inFlight !== undefined) {
+        // Keep the saver and draft reachable through the active write. Cleanup
+        // flushes then continue with the newest value once that write settles.
+        const inFlight = draft.inFlight;
+        void inFlight.then(() => {
+          if (pending.get(taskId) !== draft) return;
+          draft.cancelTimer?.();
+          draft.cancelTimer = undefined;
+          void runSave(draft);
+        });
+        return;
+      }
       void runSave(draft);
     },
     hasPending: () => pending.size > 0,
