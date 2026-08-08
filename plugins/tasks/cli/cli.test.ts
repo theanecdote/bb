@@ -17,6 +17,7 @@ import {
 import { describe, expect, it, vi } from "vitest";
 
 import { createStore } from "../api";
+import { createLinearMappingStore } from "../linear/store";
 import plugin from "../server";
 
 // Passthrough mock with one injectable failure: files named boom.bin fail at
@@ -89,6 +90,133 @@ function stdout(result: {
 }
 
 describe("bb tasks CLI", () => {
+  it("enforces Linear ownership through the production plugin CLI", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async (_url, init) => {
+      const request = JSON.parse(String(init?.body)) as {
+        operationName: string;
+      };
+      expect(request.operationName).toBe("CreateComment");
+      return new Response(
+        JSON.stringify({
+          data: {
+            commentCreate: {
+              success: true,
+              comment: { id: "linear-comment-1" },
+            },
+          },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetch);
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "tasks",
+      settings: { linearApiKey: "lin_api_test" },
+    });
+    await plugin(bb);
+
+    try {
+      const project = JSON.parse(
+        stdout(
+          await harness.runCli([
+            "project",
+            "create",
+            "--name",
+            "Linear team",
+            "--prefix",
+            "LIN",
+            "--json",
+          ]),
+        ),
+      ).project;
+      const task = JSON.parse(
+        stdout(
+          await harness.runCli([
+            "create",
+            "--project",
+            "LIN",
+            "--title",
+            "Mapped issue",
+            "--json",
+          ]),
+        ),
+      ).task;
+      const mappings = createLinearMappingStore(bb.storage.database());
+      mappings.upsertTeamMapping({
+        linearTeamId: "linear-team-1",
+        projectId: project.id,
+        teamKey: "LIN",
+        teamName: "Linear team",
+      });
+      mappings.upsertIssueMapping({
+        linearIssueId: "linear-issue-1",
+        taskId: task.id,
+        linearTeamId: "linear-team-1",
+        identifier: "LIN-1",
+        url: "https://linear.app/acme/issue/LIN-1",
+        linearStateId: "state-1",
+        linearUpdatedAt: "2026-08-08T00:00:00.000Z",
+        active: true,
+      });
+
+      const rename = await harness.runCli([
+        "project",
+        "update",
+        "LIN",
+        "--rename-prefix",
+        "NEW",
+      ]);
+      expect(rename).toMatchObject({
+        exitCode: 1,
+        stderr: "Linear project prefixes are managed by Linear",
+      });
+      const unchanged = JSON.parse(
+        stdout(await harness.runCli(["project", "show", "LIN", "--json"])),
+      ).project;
+      expect(unchanged.prefix).toBe("LIN");
+
+      const human = JSON.parse(
+        stdout(
+          await harness.runCli([
+            "comment",
+            "LIN-1",
+            "--body",
+            "Human CLI comment",
+            "--json",
+          ]),
+        ),
+      ).comment;
+      expect(human.kind).toBe("user");
+      expect(fetch).toHaveBeenCalledTimes(1);
+
+      const agent = JSON.parse(
+        stdout(
+          await harness.runCli(
+            [
+              "comment",
+              "LIN-1",
+              "--body",
+              "Thread-context CLI comment",
+              "--json",
+            ],
+            { threadId: "thr_cli_agent" },
+          ),
+        ),
+      ).comment;
+      expect(agent).toMatchObject({
+        kind: "agent",
+        threadId: "thr_cli_agent",
+      });
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(createStore(bb).tasks.listComments(task.id)).toEqual([
+        expect.objectContaining({ id: human.id, kind: "user" }),
+        expect.objectContaining({ id: agent.id, kind: "agent" }),
+      ]);
+    } finally {
+      await harness.dispose();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("reports Linear status and sync in human and JSON forms without accepting or exposing keys", async () => {
     const secret = "lin_api_do-not-print";
     const fetch = vi.fn(async () =>

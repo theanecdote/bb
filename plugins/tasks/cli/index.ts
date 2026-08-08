@@ -686,24 +686,21 @@ async function runProject(
           ...changes,
         })
       : undefined;
-    if (
-      renameInput &&
-      store.projectPrefixExists(renameInput.prefix, project.id)
-    ) {
-      throw new CliError(
-        `Project prefix is already in use: ${renameInput.prefix}`,
-      );
+    let updated = project;
+    if (renameInput) {
+      const result = await domain.renameProjectPrefix(renameInput);
+      if (!result.ok) throw new CliError(result.error.message);
+      updated = result.project;
     }
-    const updated = store.transaction(() =>
-      store.tasks.updateProject(project.id, {
-        prefix: renameInput?.prefix,
+    if (updateInput) {
+      updated = store.tasks.updateProject(project.id, {
         name: updateInput?.name,
         color: updateInput?.color,
         folderId: updateInput?.folderId,
         linkedBbProjectId: updateInput?.linkedBbProjectId,
-      }),
-    );
-    publishProjectsChanged(bb, updated.id);
+      });
+      publishProjectsChanged(bb, updated.id);
+    }
     return args.flags.has("json")
       ? json({ project: updated })
       : `Updated project ${updated.prefix}  ${updated.name}`;
@@ -1359,7 +1356,6 @@ async function runComment(
       threadId: ctx.threadId ?? null,
       body,
       notify: args.flags.has("notify"),
-      mutationOrigin: "cli",
     },
     mutations,
   );

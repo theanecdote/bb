@@ -482,7 +482,6 @@ interface CreateCommentInput {
   threadId: string | null;
   body: string;
   notify: boolean;
-  mutationOrigin?: "cli";
 }
 
 export async function createComment(
@@ -492,12 +491,8 @@ export async function createComment(
   mutations?: LinearMutationBridge,
 ): Promise<StoredComment> {
   const prepared =
-    mutations && (input.kind === "user" || input.mutationOrigin === "cli")
-      ? await mutations.prepareUserComment(
-          input.taskId,
-          input.body,
-          input.mutationOrigin ?? "user",
-        )
+    mutations && input.kind === "user"
+      ? await mutations.prepareUserComment(input.taskId, input.body, "user")
       : undefined;
   let comment = store.transaction(
     () =>
