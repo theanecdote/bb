@@ -219,9 +219,7 @@ function TaskDetail({
         taskId,
         description: markdown,
       });
-      return result.ok
-        ? { ok: true }
-        : { ok: false, errorMessage: result.error.message };
+      return result;
     },
     onError: (message) => pushRef.current("error", message),
   });

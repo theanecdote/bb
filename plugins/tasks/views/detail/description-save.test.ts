@@ -92,12 +92,16 @@ describe("createDescriptionSaver", () => {
   it("does not retry a failed mapped write on blur before its deadline", async () => {
     const save = vi
       .fn<() => Promise<DescriptionSaveOutcome>>()
-      .mockRejectedValueOnce(new Error("network down"))
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { message: "Linear rejected it" },
+      })
       .mockResolvedValue({ ok: true });
     const { errors, saver } = setup(save);
     saver.onChange("linear", "draft", MAPPED_DELAY, MAPPED_DELAY);
     await vi.advanceTimersByTimeAsync(MAPPED_DELAY);
-    expect(errors).toEqual(["network down"]);
+    expect(errors).toEqual(["Linear rejected it"]);
+    expect(saver.hasPending()).toBe(true);
 
     await vi.advanceTimersByTimeAsync(4_000);
     saver.flush("linear"); // blur
@@ -137,7 +141,7 @@ describe("createDescriptionSaver", () => {
     expect(saver.hasPending()).toBe(true);
   });
 
-  it("does not clear a newer draft typed while a save is in flight", async () => {
+  it("re-arms a newer draft whose timer expires while a save is in flight", async () => {
     let release: (() => void) | undefined;
     const save = vi.fn(async () => {
       await new Promise<void>((resolve) => {
@@ -149,10 +153,14 @@ describe("createDescriptionSaver", () => {
     saver.onChange("task", "v1", UNMAPPED_DELAY);
     await vi.advanceTimersByTimeAsync(UNMAPPED_DELAY);
     saver.onChange("task", "v2", UNMAPPED_DELAY);
+    await vi.advanceTimersByTimeAsync(UNMAPPED_DELAY);
+    expect(save).toHaveBeenCalledOnce();
     release?.();
     await settle();
     expect(saver.hasPending()).toBe(true);
-    await vi.advanceTimersByTimeAsync(UNMAPPED_DELAY);
+    await vi.advanceTimersByTimeAsync(UNMAPPED_DELAY - 1);
+    expect(save).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
     expect(save).toHaveBeenCalledTimes(2);
   });
 });

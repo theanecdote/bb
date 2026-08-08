@@ -1,8 +1,7 @@
-/** Outcome of one save attempt against the updateTask RPC. */
-export interface DescriptionSaveOutcome {
-  ok: boolean;
-  errorMessage?: string;
-}
+/** The relevant portion of the updateTask RPC's typed outcome. */
+export type DescriptionSaveOutcome =
+  | { ok: true }
+  | { ok: false; error: { message: string } };
 
 export interface DescriptionSaverOptions {
   save(taskId: string, markdown: string): Promise<DescriptionSaveOutcome>;
@@ -26,9 +25,8 @@ export interface DescriptionSaver {
 
 /**
  * Debounced description autosave. The pending draft is cleared only once the
- * server has handled the request (success or domain rejection) — a transport
- * failure keeps it pending so the unmount flush or the next debounce tick
- * retries instead of silently dropping the draft.
+ * server has accepted the request. Mapped domain and transport failures keep
+ * the draft pending so a later retry or flush cannot silently drop it.
  */
 export function createDescriptionSaver(
   options: DescriptionSaverOptions,
@@ -65,11 +63,20 @@ export function createDescriptionSaver(
     draft.inFlight = true;
     try {
       const result = await options.save(draft.taskId, attempt);
-      // A newer draft may have arrived while the RPC was in flight; only the
-      // attempt that was actually sent is settled.
-      if (draft.markdown === attempt) pending.delete(draft.taskId);
-      if (!result.ok && result.errorMessage !== undefined) {
-        options.onError(result.errorMessage);
+      if (result.ok) {
+        // A newer draft may have arrived while the RPC was in flight; only the
+        // attempt that was actually sent is settled.
+        if (draft.markdown === attempt) pending.delete(draft.taskId);
+      } else {
+        options.onError(result.error.message);
+        if (draft.retryFloorMs !== undefined) {
+          draft.retryNotBefore = Date.now() + draft.retryFloorMs;
+          arm(draft, draft.retryFloorMs);
+        } else if (draft.markdown === attempt) {
+          // Preserve existing local-task behavior: a handled domain rejection
+          // is settled rather than automatically retried.
+          pending.delete(draft.taskId);
+        }
       }
     } catch (error) {
       options.onError(error instanceof Error ? error.message : String(error));
@@ -83,6 +90,20 @@ export function createDescriptionSaver(
       }
     } finally {
       draft.inFlight = false;
+      // A newer edit's timer can expire while this attempt is still in flight.
+      // Re-arm it after settlement so the pending draft cannot become
+      // timerless. Respect any failure floor established above.
+      if (
+        pending.get(draft.taskId) === draft &&
+        draft.markdown !== attempt &&
+        draft.cancelTimer === undefined
+      ) {
+        const retryDelay = Math.max(
+          0,
+          (draft.retryNotBefore ?? 0) - Date.now(),
+        );
+        arm(draft, Math.max(draft.delayMs, retryDelay));
+      }
     }
   };
 
