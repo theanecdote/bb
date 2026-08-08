@@ -108,7 +108,7 @@ function renderList(fixture: ListFixture) {
         listPresets: () => ({ presets: [] }),
         sidebarSummary: () => ({ projects: [] }),
         listLabels: () => ({ labels: fixture.labels ?? [] }),
-        listTasks: () => ({ tasks: fixture.tasks }),
+        listTasks: () => ({ ok: true, tasks: fixture.tasks }),
         listTaskThreads: ({ taskId }: { taskId: string }) => ({
           taskThreads: fixture.threadsByTask?.[taskId] ?? [],
         }),
@@ -133,6 +133,7 @@ describe("list-row Active chip", () => {
     const historical = task(3);
     const bare = task(4);
     const { slot } = renderList({
+      ok: true,
       tasks: [working, starting, historical, bare],
       threadsByTask: {
         [working.id]: [thread(working.id, "working", "W1")],
@@ -162,6 +163,7 @@ describe("list-row Active chip", () => {
   it("aggregates multiple live agents into one constant-text chip", async () => {
     const busy = task(1);
     const { slot } = renderList({
+      ok: true,
       tasks: [busy],
       threadsByTask: {
         [busy.id]: [
@@ -181,10 +183,12 @@ describe("list-row Active chip", () => {
 
 describe("list-row metadata rail", () => {
   it("fetches no comment/attachment data and renders no counts", async () => {
-    const { slot, calls } = renderList({ tasks: [task(1), task(2)] });
+    const { slot, calls } = renderList({ ok: true, tasks: [task(1), task(2)] });
     await slot.findByText("TSK-1");
     // Give the meta query a tick to settle before asserting on RPC traffic.
-    await waitFor(() => expect(slot.getAllByRole("button").length > 0).toBe(true));
+    await waitFor(() =>
+      expect(slot.getAllByRole("button").length > 0).toBe(true),
+    );
     expect(calls.listComments).toBe(0);
     expect(calls.listAttachments).toBe(0);
     expect(slot.queryByTitle("Comments")).toBeNull();
@@ -199,10 +203,14 @@ describe("list-row metadata rail", () => {
       label("D", "very-long-label-name-that-truncates"),
     ];
     const { slot } = renderList({
+      ok: true,
       tasks: [
         task(1),
         task(2, [labels[0]!.id]),
-        task(3, labels.map((entry) => entry.id)),
+        task(
+          3,
+          labels.map((entry) => entry.id),
+        ),
       ],
       labels,
     });

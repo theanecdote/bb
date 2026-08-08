@@ -535,6 +535,25 @@ plugins are pinned to the bundled copy and update with BB app releases. Local
 path installs remain available directly through `bb plugin install ./path` or
 `path:...`, and direct `npm:`/`git:` installs stay supported.
 
+### Tasks Linear integration
+
+The Tasks plugin's `linearApiKey` setting is a secret personal Linear API key.
+Configure it through Extensions → Plugins. It is consumed only by backend
+synchronization and is never accepted by `bb tasks linear status|sync` or
+included in their output. Do not pass the key on a command line, where shell
+history and process inspection can expose it. The deployed plugin id is
+`tasks-linear` when using the standalone distribution described below.
+`LINEAR_SMOKE_API_KEY` is reserved for the opt-in, read-only developer smoke
+test; production does not read it.
+
+Linear team projects are import-only and begin without a linked BB project, so
+delegation is unavailable until ownership is linked explicitly. Linear owns
+imported task keys/numbers, title, description, priority, due date, and workflow
+status. BB owns labels, hierarchy, project color, local comments, and attached
+threads. Attachments to mapped tasks are refused. `bb tasks comment` sends user
+comments to Linear; agent/system comments and Linear's existing comment
+transcript remain local to their source.
+
 ### Plugin updates
 
 Bundled builtin and official plugins update with BB app releases. For direct

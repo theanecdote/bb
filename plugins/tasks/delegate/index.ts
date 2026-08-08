@@ -11,6 +11,10 @@ import type {
 } from "../db";
 import type { TasksApiStore } from "../api";
 import {
+  LinearMutationError,
+  type LinearMutationBridge,
+} from "../linear/mutations";
+import {
   presetPermissionModeSchema,
   type CommentsChangedEvent,
   type TasksChangedEvent,
@@ -314,6 +318,7 @@ function taskThreadLiveStatus(thread: SdkThread): TaskThreadLiveStatus {
 export function handlers(
   bb: BbPluginApi,
   store: TasksApiStore,
+  mutations?: LinearMutationBridge,
 ): PluginRpcHandlers<typeof delegationRpcContract> {
   return {
     async delegate(input) {
@@ -363,16 +368,6 @@ export function handlers(
           liveStatus: "starting",
         });
 
-        if (task.status === "backlog" || task.status === "todo") {
-          store.tasks.updateTask(task.id, { status: "in_progress" });
-          createSystemComment(store.tasks, {
-            taskId: task.id,
-            presetName: preset.name,
-            threadId: thread.id,
-            body: `Status changed to In Progress · dispatched to ${preset.name}`,
-          });
-        }
-
         createSystemComment(store.tasks, {
           taskId: task.id,
           presetName: preset.name,
@@ -381,6 +376,44 @@ export function handlers(
         });
         return attached;
       });
+
+      if (task.status === "backlog" || task.status === "todo") {
+        try {
+          const prepared = await mutations?.prepareTaskMutation(
+            task,
+            { status: "in_progress" },
+            "delegation",
+          );
+          store.transaction(() => {
+            prepared?.commit(store.tasks) ??
+              store.tasks.updateTask(task.id, { status: "in_progress" });
+            createSystemComment(store.tasks, {
+              taskId: task.id,
+              presetName: preset.name,
+              threadId: thread.id,
+              body: `Status changed to In Progress · dispatched to ${preset.name}`,
+            });
+          });
+        } catch (error) {
+          if (!(error instanceof LinearMutationError)) throw error;
+          mutations?.recordSyncDiagnostic(
+            error.code === "linear_rate_limited"
+              ? "LINEAR_RATE_LIMITED"
+              : "LINEAR_MAPPING_ERROR",
+            "A delegated thread was attached, but its mapped Linear status could not be updated. Reconcile the mapping and retry synchronization.",
+            error.retryAt,
+          );
+          createSystemComment(store.tasks, {
+            taskId: task.id,
+            presetName: preset.name,
+            threadId: thread.id,
+            body: "The thread was dispatched, but Linear rejected the status change. The task status was not changed.",
+          });
+          bb.log.warn(
+            `Delegated ${task.key}, but Linear rejected its status transition`,
+          );
+        }
+      }
 
       try {
         const currentThread = await bb.sdk.threads.get({ threadId: thread.id });
@@ -429,6 +462,7 @@ export function handlers(
 export function registerDelegation(
   bb: BbPluginApi,
   store: TasksApiStore,
+  mutations?: LinearMutationBridge,
 ): void {
-  bb.rpc.register(delegationRpcContract, handlers(bb, store));
+  bb.rpc.register(delegationRpcContract, handlers(bb, store, mutations));
 }

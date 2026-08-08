@@ -17,6 +17,7 @@ import {
 import { describe, expect, it, vi } from "vitest";
 
 import { createStore } from "../api";
+import { createLinearMappingStore } from "../linear/store";
 import plugin from "../server";
 
 // Passthrough mock with one injectable failure: files named boom.bin fail at
@@ -89,10 +90,230 @@ function stdout(result: {
 }
 
 describe("bb tasks CLI", () => {
-  it("lists seed-demo in help while retaining the explicit confirmation guard", async () => {
-    const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
+  it("enforces Linear ownership through the production plugin CLI", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(async (_url, init) => {
+      const request = JSON.parse(String(init?.body)) as {
+        operationName: string;
+      };
+      expect(request.operationName).toBe("CreateComment");
+      return new Response(
+        JSON.stringify({
+          data: {
+            commentCreate: {
+              success: true,
+              comment: { id: "linear-comment-1" },
+            },
+          },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetch);
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "tasks",
+      settings: { linearApiKey: "lin_api_test" },
+    });
     await plugin(bb);
 
+    try {
+      const project = JSON.parse(
+        stdout(
+          await harness.runCli([
+            "project",
+            "create",
+            "--name",
+            "Linear team",
+            "--prefix",
+            "LIN",
+            "--json",
+          ]),
+        ),
+      ).project;
+      const task = JSON.parse(
+        stdout(
+          await harness.runCli([
+            "create",
+            "--project",
+            "LIN",
+            "--title",
+            "Mapped issue",
+            "--json",
+          ]),
+        ),
+      ).task;
+      const mappings = createLinearMappingStore(bb.storage.database());
+      mappings.upsertTeamMapping({
+        linearTeamId: "linear-team-1",
+        projectId: project.id,
+        teamKey: "LIN",
+        teamName: "Linear team",
+      });
+      mappings.upsertIssueMapping({
+        linearIssueId: "linear-issue-1",
+        taskId: task.id,
+        linearTeamId: "linear-team-1",
+        identifier: "LIN-1",
+        url: "https://linear.app/acme/issue/LIN-1",
+        linearStateId: "state-1",
+        linearUpdatedAt: "2026-08-08T00:00:00.000Z",
+        active: true,
+      });
+
+      const rename = await harness.runCli([
+        "project",
+        "update",
+        "LIN",
+        "--rename-prefix",
+        "NEW",
+      ]);
+      expect(rename).toMatchObject({
+        exitCode: 1,
+        stderr: "Linear project prefixes are managed by Linear",
+      });
+      const unchanged = JSON.parse(
+        stdout(await harness.runCli(["project", "show", "LIN", "--json"])),
+      ).project;
+      expect(unchanged.prefix).toBe("LIN");
+
+      const human = JSON.parse(
+        stdout(
+          await harness.runCli([
+            "comment",
+            "LIN-1",
+            "--body",
+            "Human CLI comment",
+            "--json",
+          ]),
+        ),
+      ).comment;
+      expect(human.kind).toBe("user");
+      expect(fetch).toHaveBeenCalledTimes(1);
+
+      const agent = JSON.parse(
+        stdout(
+          await harness.runCli(
+            [
+              "comment",
+              "LIN-1",
+              "--body",
+              "Thread-context CLI comment",
+              "--json",
+            ],
+            { threadId: "thr_cli_agent" },
+          ),
+        ),
+      ).comment;
+      expect(agent).toMatchObject({
+        kind: "agent",
+        threadId: "thr_cli_agent",
+      });
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(
+        createStore(bb.storage.database()).tasks.listComments(task.id),
+      ).toEqual([
+        expect.objectContaining({ id: human.id, kind: "user" }),
+        expect.objectContaining({ id: agent.id, kind: "agent" }),
+      ]);
+    } finally {
+      await harness.dispose();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("reports Linear status and sync in human and JSON forms without accepting or exposing keys", async () => {
+    const secret = "lin_api_do-not-print";
+    const fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: {
+              viewer: {
+                id: "viewer-1",
+                name: "Ada",
+                assignedIssues: {
+                  nodes: [],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+              },
+            },
+          }),
+        ),
+    );
+    vi.stubGlobal("fetch", fetch);
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "tasks",
+      settings: { linearApiKey: secret },
+    });
+    await plugin(bb);
+
+    expect(stdout(await harness.runCli(["linear", "status"]))).toMatch(
+      /^Configured\s+true/mu,
+    );
+    expect(
+      JSON.parse(stdout(await harness.runCli(["linear", "status", "--json"]))),
+    ).toMatchObject({ configured: true, syncing: false, activeIssueCount: 0 });
+
+    expect(stdout(await harness.runCli(["linear", "sync"]))).toMatch(
+      /^OK\s+true/mu,
+    );
+    expect(
+      JSON.parse(stdout(await harness.runCli(["linear", "sync", "--json"]))),
+    ).toMatchObject({
+      ok: true,
+      createdProjects: 0,
+      createdTasks: 0,
+      updatedTasks: 0,
+      deactivatedTasks: 0,
+    });
+
+    for (const argv of [
+      ["linear", "status", "extra"],
+      ["linear", "sync", "--api-key", secret],
+      ["linear", "sync", "--linearApiKey", secret],
+    ]) {
+      const result = await harness.runCli(argv);
+      expect(result.exitCode).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).not.toContain(secret);
+    }
+
+    await harness.dispose();
+    vi.unstubAllGlobals();
+  });
+
+  it("prints only typed safe Linear failures", async () => {
+    const secret = "lin_api_never-leak";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(`rejected ${secret}`, { status: 401 })),
+    );
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "tasks",
+      settings: { linearApiKey: secret },
+    });
+    await plugin(bb);
+
+    const result = await harness.runCli(["linear", "sync", "--json"]);
+    expect(JSON.parse(stdout(result))).toMatchObject({
+      ok: false,
+      error: { code: "LINEAR_API_ERROR" },
+    });
+    expect(result.stdout).not.toContain(secret);
+
+    await harness.dispose();
+    vi.unstubAllGlobals();
+  });
+
+  it("lists seed-demo in help while retaining the explicit confirmation guard", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "tasks-linear",
+    });
+    await plugin(bb);
+
+    expect(harness.registrations.cli?.name).toBe("tasks");
+    await expect(harness.callRpc("pluginTransport", null)).resolves.toEqual({
+      pluginId: "tasks-linear",
+      attachmentBaseUrl: "/api/v1/plugins/tasks-linear/http/attachments",
+      tokenUrl: "/api/v1/plugins/tasks-linear/token",
+    });
     expect(stdout(await harness.runCli(["--help"]))).toContain(
       "seed-demo                      Create sample data (requires --yes)",
     );
@@ -545,7 +766,7 @@ describe("bb tasks CLI", () => {
   it("traverses a project whose former single JSON response exceeds 64 KiB", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
     await plugin(bb);
-    const store = createStore(bb);
+    const store = createStore(bb.storage.database());
     const project = store.tasks.createProject({
       name: "Large project",
       prefix: "BIG",
@@ -979,7 +1200,7 @@ describe("bb tasks CLI", () => {
         presetName: "Attached",
       }),
     ]);
-    const taskStore = createStore(bb).tasks;
+    const taskStore = createStore(bb.storage.database()).tasks;
     taskStore.createComment({
       taskId: threads.task.id,
       kind: "agent",

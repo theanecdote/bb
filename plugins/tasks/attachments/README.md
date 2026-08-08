@@ -1,7 +1,7 @@
 # Task attachment HTTP surface
 
 Attachment upload uses a raw request body at
-`POST /api/v1/plugins/tasks/http/attachments/upload`. Raw bytes are the
+`POST /api/v1/plugins/<plugin-id>/http/attachments/upload`. Raw bytes are the
 simplest supported format, but local-auth non-GET plugin routes require JSON,
 so upload uses plugin-token auth. Pass the token in `x-bb-plugin-token` (or the
 `token` query parameter).
@@ -12,8 +12,13 @@ and `x-mime-type` headers. Exactly one owner is required. The response is
 `{ attachmentId, url }`.
 
 The returned local-auth frontend URL is
-`GET /api/v1/plugins/tasks/http/attachments/download?attachmentId=...`.
+`GET /api/v1/plugins/<plugin-id>/http/attachments/download?attachmentId=...`.
 Deletion is
-`DELETE /api/v1/plugins/tasks/http/attachments/delete?attachmentId=...` and,
+`DELETE /api/v1/plugins/<plugin-id>/http/attachments/delete?attachmentId=...`
+and,
 because it is a local-auth non-GET request, must use `Content-Type:
 application/json`.
+
+Attachment URLs are persisted in task descriptions and intentionally bind the
+content to the plugin's runtime ID. Do not rename an installed Tasks plugin
+after attachments have been used (in particular, keep `tasks-linear` stable).

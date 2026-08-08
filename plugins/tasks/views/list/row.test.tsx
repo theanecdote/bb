@@ -87,7 +87,7 @@ function renderList(tasks: Task[], options: Options = {}) {
         listPresets: () => ({ presets: [] }),
         sidebarSummary: () => ({ projects: [] }),
         listLabels: () => ({ labels: [label] }),
-        listTasks: () => ({ tasks }),
+        listTasks: () => ({ ok: true, tasks }),
         listTaskThreads: () => ({ taskThreads: [] }),
         listComments: () => ({ comments: [] }),
         listAttachments: () => ({ attachments: [] }),
@@ -114,7 +114,9 @@ describe("inline row editing", () => {
     const row = await rowFor(slot, "TSK-1");
 
     fireEvent.click(
-      within(row).getByRole("button", { name: /Change status, currently Todo/ }),
+      within(row).getByRole("button", {
+        name: /Change status, currently Todo/,
+      }),
     );
     const drawer = await slot.findByRole("dialog", { name: "Change status" });
     fireEvent.click(within(drawer).getByRole("menuitem", { name: /Done/ }));
@@ -132,10 +134,9 @@ describe("inline row editing", () => {
     // ...and the row reflects the new status immediately (optimistically).
     await waitFor(() =>
       expect(
-        within(slot.container.querySelector('[data-task-key="TSK-1"]')!).getByRole(
-          "button",
-          { name: /Change status, currently Done/ },
-        ),
+        within(
+          slot.container.querySelector('[data-task-key="TSK-1"]')!,
+        ).getByRole("button", { name: /Change status, currently Done/ }),
       ).toBeTruthy(),
     );
   });
@@ -163,10 +164,9 @@ describe("inline row editing", () => {
     );
     await waitFor(() =>
       expect(
-        within(slot.container.querySelector('[data-task-key="TSK-1"]')!).getByRole(
-          "button",
-          { name: /currently Urgent/ },
-        ),
+        within(
+          slot.container.querySelector('[data-task-key="TSK-1"]')!,
+        ).getByRole("button", { name: /currently Urgent/ }),
       ).toBeTruthy(),
     );
   });
@@ -181,7 +181,9 @@ describe("inline row editing", () => {
     const row = await rowFor(slot, "TSK-1");
 
     fireEvent.click(
-      within(row).getByRole("button", { name: /Change status, currently Todo/ }),
+      within(row).getByRole("button", {
+        name: /Change status, currently Todo/,
+      }),
     );
     const drawer = await slot.findByRole("dialog", { name: "Change status" });
     fireEvent.click(within(drawer).getByRole("menuitem", { name: /Done/ }));
@@ -191,28 +193,31 @@ describe("inline row editing", () => {
     // ...and the row reverts to its original status (truthful rollback).
     await waitFor(() =>
       expect(
-        within(slot.container.querySelector('[data-task-key="TSK-1"]')!).getByRole(
-          "button",
-          { name: /Change status, currently Todo/ },
-        ),
+        within(
+          slot.container.querySelector('[data-task-key="TSK-1"]')!,
+        ).getByRole("button", { name: /Change status, currently Todo/ }),
       ).toBeTruthy(),
     );
   });
 
   it("only issues a mutation when the value actually changes", async () => {
-    const slot = renderList([task({ id: "01HZT1", number: 1, status: "todo" })]);
+    const slot = renderList([
+      task({ id: "01HZT1", number: 1, status: "todo" }),
+    ]);
     const row = await rowFor(slot, "TSK-1");
 
     fireEvent.click(
-      within(row).getByRole("button", { name: /Change status, currently Todo/ }),
+      within(row).getByRole("button", {
+        name: /Change status, currently Todo/,
+      }),
     );
     const drawer = await slot.findByRole("dialog", { name: "Change status" });
     // Re-selecting the current status is a no-op.
     fireEvent.click(within(drawer).getByRole("menuitem", { name: /Todo/ }));
 
     await waitFor(() => expect(slot.queryByRole("dialog")).toBeNull());
-    expect(
-      slot.rpcCalls.some((call) => call.method === "updateTask"),
-    ).toBe(false);
+    expect(slot.rpcCalls.some((call) => call.method === "updateTask")).toBe(
+      false,
+    );
   });
 });

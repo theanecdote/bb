@@ -80,6 +80,11 @@ function comment(
 }
 
 describe("AttachmentTracks", () => {
+  const transport = {
+    pluginId: "tasks",
+    attachmentBaseUrl: "/api/v1/plugins/tasks/attachments",
+    tokenUrl: "/api/v1/plugins/tasks/token",
+  };
   const attachment = (
     id: string,
     fileName: string,
@@ -98,6 +103,7 @@ describe("AttachmentTracks", () => {
   it("renders file cards before images regardless of input order", () => {
     const screen = render(
       <AttachmentTracks
+        transport={transport}
         attachments={[
           attachment("01HZZZZZZZZZZZZZZZZZZZZ1I1", "shot-a.png", true),
           attachment("01HZZZZZZZZZZZZZZZZZZZZ1F1", "notes.md", false),
@@ -116,7 +122,10 @@ describe("AttachmentTracks", () => {
   it("keeps each caption inside its own image figure", () => {
     const screen = render(
       <AttachmentTracks
-        attachments={[attachment("01HZZZZZZZZZZZZZZZZZZZZ1I1", "shot.png", true)]}
+        transport={transport}
+        attachments={[
+          attachment("01HZZZZZZZZZZZZZZZZZZZZ1I1", "shot.png", true),
+        ]}
         onOpenImage={() => {}}
       />,
     );
@@ -269,7 +278,7 @@ async function renderComposerWithTask(options?: {
       },
     },
   });
-  const store = createStore(bb);
+  const store = createStore(bb.storage.database());
   const project = store.tasks.createProject({
     name: "Composer",
     prefix: "CMP",
@@ -295,17 +304,15 @@ async function renderComposerWithTask(options?: {
       body: string;
       notify: boolean;
     };
-    return {
-      comment: await createComment(bb, store, {
-        taskId: request.taskId,
-        kind: "user",
-        authorName: "You",
-        presetName: null,
-        threadId: null,
-        body: request.body,
-        notify: request.notify,
-      }),
-    };
+    return createComment(bb, store, {
+      taskId: request.taskId,
+      kind: "user",
+      authorName: "You",
+      presetName: null,
+      threadId: null,
+      body: request.body,
+      notify: request.notify,
+    });
   });
 
   render(
@@ -424,9 +431,8 @@ describe("CommentComposer", () => {
       });
       expect(rpcCall).not.toHaveBeenCalled();
       expect(
-        (
-          screen.getByRole("button", { name: "Comment" }) as HTMLButtonElement
-        ).disabled,
+        (screen.getByRole("button", { name: "Comment" }) as HTMLButtonElement)
+          .disabled,
       ).toBe(true);
     } finally {
       releaseSend();

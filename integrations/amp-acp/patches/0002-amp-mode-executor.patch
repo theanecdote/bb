@@ -1,0 +1,125 @@
+diff --git a/src/server.ts b/src/server.ts
+index a85b729..9c7d463 100644
+--- a/src/server.ts
++++ b/src/server.ts
+@@ -41,0 +42 @@ const PERMISSION_MODES = ['default', 'bypass'] as const;
++const AMP_EXECUTORS = ['local', 'orb'] as const;
+@@ -66,0 +68 @@ type AmpModelId = typeof AMP_MODELS[number]['modelId'];
++type AmpExecutor = typeof AMP_EXECUTORS[number];
+@@ -68,0 +71,12 @@ type PermissionMode = typeof PERMISSION_MODES[number];
++function ampSelectionId(mode: AmpModelId, executor: AmpExecutor): string {
++  return `${mode}:${executor}`;
++}
++
++function parseAmpSelection(value: string): { mode: AmpModelId; executor: AmpExecutor } | null {
++  if (isAmpModelId(value)) return { mode: value, executor: 'local' };
++  const [mode, executor, extra] = value.split(':');
++  if (extra !== undefined || !mode || !executor) return null;
++  if (!isAmpModelId(mode) || !AMP_EXECUTORS.includes(executor as AmpExecutor)) return null;
++  return { mode, executor: executor as AmpExecutor };
++}
++
+@@ -77 +91 @@ function isPermissionMode(mode: string): mode is PermissionMode {
+-function buildSessionConfigOptions(s: Pick<SessionState, 'mode' | 'model'>): SessionConfigOption[] {
++function buildSessionConfigOptions(s: Pick<SessionState, 'mode' | 'model' | 'executor'>): SessionConfigOption[] {
+@@ -106,6 +120,11 @@ function buildSessionConfigOptions(s: Pick<SessionState, 'mode' | 'model'>): Ses
+-      currentValue: s.model,
+-      options: AMP_MODELS.map((model) => ({
+-        value: model.modelId,
+-        name: model.name,
+-        description: model.description,
+-      })),
++      currentValue: ampSelectionId(s.model, s.executor),
++      options: AMP_MODELS.flatMap((model) =>
++        AMP_EXECUTORS.map((executor) => ({
++          value: ampSelectionId(model.modelId, executor),
++          name: `${model.name} · ${executor === 'local' ? 'Machine' : 'Orb'}`,
++          description:
++            executor === 'local'
++              ? `${model.description} Runs in the selected BB environment.`
++              : `${model.description} Runs in a new Amp-managed Orb.`,
++        })),
++      ),
+@@ -122,0 +142 @@ interface SessionState {
++  executor: AmpExecutor;
+@@ -189,0 +210 @@ export class AmpAcpAgent implements Agent {
++      executor: 'local',
+@@ -230,0 +252 @@ export class AmpAcpAgent implements Agent {
++      executor: 'local',
+@@ -286,0 +309 @@ If there are Cursor rules (in .cursor/rules/ or .cursorrules), Claude rules (CLA
++      executor: s.executor,
+@@ -379 +402,2 @@ If there are Cursor rules (in .cursor/rules/ or .cursorrules), Claude rules (CLA
+-        if (!isAmpModelId(params.value)) {
++        const selection = parseAmpSelection(params.value);
++        if (!selection) {
+@@ -382 +406,2 @@ If there are Cursor rules (in .cursor/rules/ or .cursorrules), Claude rules (CLA
+-        s.model = params.value;
++        s.model = selection.mode;
++        s.executor = selection.executor;
+diff --git a/src/amp-transport.ts b/src/amp-transport.ts
+index 9da6711..6a27339 100644
+--- a/src/amp-transport.ts
++++ b/src/amp-transport.ts
+@@ -24,0 +25 @@ export interface AmpExecutionOptions {
++  executor?: 'local' | 'orb';
+@@ -67,0 +69 @@ export function buildAmpSdkOptions(options: AmpExecutionOptions): AmpOptions {
++    executor: options.continue ? undefined : options.executor,
+@@ -84,0 +87 @@ export function buildAmpCliArgs(options: AmpExecutionOptions): string[] {
++  if (options.executor === 'orb' && !options.continue) args.push('--orb-execute');
+diff --git a/src/acp-protocol.test.ts b/src/acp-protocol.test.ts
+index 782c55e..804c868 100644
+--- a/src/acp-protocol.test.ts
++++ b/src/acp-protocol.test.ts
+@@ -71 +71 @@ describe('ACP Protocol End-to-End', () => {
+-      currentValue: 'medium',
++      currentValue: 'medium:local',
+@@ -73,4 +73,8 @@ describe('ACP Protocol End-to-End', () => {
+-        { value: 'low', name: 'Low' },
+-        { value: 'medium', name: 'Medium' },
+-        { value: 'high', name: 'High' },
+-        { value: 'ultra', name: 'Ultra' },
++        { value: 'low:local', name: 'Low · Machine' },
++        { value: 'low:orb', name: 'Low · Orb' },
++        { value: 'medium:local', name: 'Medium · Machine' },
++        { value: 'medium:orb', name: 'Medium · Orb' },
++        { value: 'high:local', name: 'High · Machine' },
++        { value: 'high:orb', name: 'High · Orb' },
++        { value: 'ultra:local', name: 'Ultra · Machine' },
++        { value: 'ultra:orb', name: 'Ultra · Orb' },
+@@ -90 +94 @@ describe('ACP Protocol End-to-End', () => {
+-      value: 'high',
++      value: 'high:orb',
+@@ -95 +99 @@ describe('ACP Protocol End-to-End', () => {
+-      currentValue: 'high',
++      currentValue: 'high:orb',
+diff --git a/src/amp-transport.test.ts b/src/amp-transport.test.ts
+index f84d4cb..7deb745 100644
+--- a/src/amp-transport.test.ts
++++ b/src/amp-transport.test.ts
+@@ -88,0 +89,9 @@ describe('Amp transport', () => {
++  it('targets an Orb only for a new thread', () => {
++    expect(buildAmpSdkOptions({ ...baseOptions, executor: 'orb' })).toMatchObject({
++      executor: 'orb',
++    });
++    expect(buildAmpCliArgs({ ...baseOptions, executor: 'orb' })).toContain('--orb-execute');
++    expect(buildAmpSdkOptions({ ...baseOptions, executor: 'orb', continue: 'T-existing' }).executor).toBeUndefined();
++    expect(buildAmpCliArgs({ ...baseOptions, executor: 'orb', continue: 'T-existing' })).not.toContain('--orb-execute');
++  });
++
+diff --git a/src/prompt-continue.test.ts b/src/prompt-continue.test.ts
+index 786d55a..b5a8636 100644
+--- a/src/prompt-continue.test.ts
++++ b/src/prompt-continue.test.ts
+@@ -72,0 +73,12 @@ describe('AmpAcpAgent prompt() continue option', () => {
++
++  it('passes the selected Orb executor on the first prompt', async () => {
++    const session = await agent.newSession({ cwd: '/tmp', mcpServers: [] });
++    await agent.setSessionConfigOption({ sessionId: session.sessionId, configId: 'amp-mode', value: 'high:orb' });
++    await agent.prompt({
++      sessionId: session.sessionId,
++      prompt: [{ type: 'text', text: 'hello' }],
++    });
++
++    expect(capturedCalls).toHaveLength(1);
++    expect(capturedCalls[0]!.options).toMatchObject({ mode: 'high', executor: 'orb' });
++  });

@@ -1,5 +1,8 @@
 import { Icon, ICON_NAMES, type IconName } from "@bb/shared-ui/icon";
-import { usePluginCompactBranding } from "@/lib/plugin-logos";
+import {
+  usePluginBranding,
+  usePluginCompactBranding,
+} from "@/lib/plugin-logos";
 import { cn } from "@bb/shared-ui/lib/utils";
 
 /** Plugin icon hints are freeform strings; unknown ones get a generic icon. */
@@ -61,6 +64,41 @@ export function PluginIcon({
       name={pluginIconName(branding?.icon ?? icon)}
       className={cn("size-4 shrink-0", className)}
       aria-hidden="true"
+    />
+  );
+}
+
+/** Wide plugin identity for an explicitly logo-only tab pill. */
+export function PluginWordmark({
+  pluginId,
+  icon,
+  className,
+}: {
+  pluginId: string;
+  icon: string | null;
+  className?: string;
+}) {
+  const branding = usePluginBranding(pluginId);
+  const logoUrl = branding?.logoUrl ?? branding?.logoDarkUrl ?? null;
+  if (logoUrl === null) {
+    return <PluginIcon pluginId={pluginId} icon={icon} className={className} />;
+  }
+  return (
+    <span
+      aria-hidden="true"
+      data-plugin-wordmark-asset={logoUrl}
+      className={cn("inline-block h-4 w-8 shrink-0", className)}
+      style={{
+        backgroundColor: "currentColor",
+        maskImage: `url("${logoUrl}")`,
+        maskPosition: "center",
+        maskRepeat: "no-repeat",
+        maskSize: "contain",
+        WebkitMaskImage: `url("${logoUrl}")`,
+        WebkitMaskPosition: "center",
+        WebkitMaskRepeat: "no-repeat",
+        WebkitMaskSize: "contain",
+      }}
     />
   );
 }

@@ -169,6 +169,7 @@ export interface UpdateProjectInput {
 export interface CreateTaskInput {
   id?: string;
   projectId: string;
+  number?: number;
   title: string;
   description?: string;
   status?: TaskStatus;

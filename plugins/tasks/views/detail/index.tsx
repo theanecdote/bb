@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { SmilePlusIcon } from "@hugeicons/core-free-icons";
-import type { Task } from "../../shared/contract.js";
+import type { PluginTransport, Task } from "../../shared/contract.js";
 import { useBbNavigate } from "@bb/plugin-sdk/app";
 import {
   listAllTasks,
@@ -34,6 +34,7 @@ export interface DetailViewProps {
 }
 
 const DESCRIPTION_SAVE_DELAY_MS = 800;
+const LINEAR_DESCRIPTION_SAVE_DELAY_MS = 10_000;
 /** Poll cadence for PR state while any attached PR is still open or draft. */
 const ACTIVE_PULL_REQUEST_REFRESH_MS = 60_000;
 
@@ -190,7 +191,13 @@ function DetailSkeleton() {
   );
 }
 
-function TaskDetail({ task }: { task: Task }) {
+function TaskDetail({
+  task,
+  transport,
+}: {
+  task: Task;
+  transport: PluginTransport;
+}) {
   const rpc = useTasksRpc();
   const navigation = useTasksNavigation();
   const { toasts, push, dismiss } = useDetailToasts();
@@ -212,12 +219,9 @@ function TaskDetail({ task }: { task: Task }) {
         taskId,
         description: markdown,
       });
-      return result.ok
-        ? { ok: true }
-        : { ok: false, errorMessage: result.error.message };
+      return result;
     },
     onError: (message) => pushRef.current("error", message),
-    delayMs: DESCRIPTION_SAVE_DELAY_MS,
   });
 
   const projects = useTasksQuery(
@@ -306,8 +310,17 @@ function TaskDetail({ task }: { task: Task }) {
 
   const onDescriptionChange = (markdown: string) => {
     setDraft({ taskId: task.id, markdown });
-    saverRef.current?.onChange(task.id, markdown);
+    saverRef.current?.onChange(
+      task.id,
+      markdown,
+      task.linearMapped
+        ? LINEAR_DESCRIPTION_SAVE_DELAY_MS
+        : DESCRIPTION_SAVE_DELAY_MS,
+      task.linearMapped ? LINEAR_DESCRIPTION_SAVE_DELAY_MS : undefined,
+    );
   };
+
+  const flushDescription = () => saverRef.current?.flush(task.id);
 
   // Flush a pending description save when leaving the page or switching task.
   useEffect(() => {
@@ -315,7 +328,7 @@ function TaskDetail({ task }: { task: Task }) {
   }, [task.id]);
 
   const uploadForTask = async (file: File) => {
-    const result = await uploadAttachment(file, { taskId: task.id });
+    const result = await uploadAttachment(transport, file, { taskId: task.id });
     attachments.refresh();
     return result;
   };
@@ -323,7 +336,7 @@ function TaskDetail({ task }: { task: Task }) {
   const onPickFiles = async (files: FileList | null) => {
     for (const file of files ?? []) {
       try {
-        await uploadAttachment(file, { taskId: task.id });
+        await uploadAttachment(transport, file, { taskId: task.id });
       } catch (error) {
         push("error", error instanceof Error ? error.message : String(error));
       }
@@ -397,6 +410,21 @@ function TaskDetail({ task }: { task: Task }) {
             onSave={(title) => void updateTask({ title })}
           />
 
+          {task.linearSource && task.linearSource.url.startsWith("https://") ? (
+            <div className="mb-3 flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Icon name="ExternalLink" className="size-3.5" />
+              <span>{task.linearSource.identifier}</span>
+              <a
+                href={task.linearSource.url}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-sm font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                Open in Linear
+              </a>
+            </div>
+          ) : null}
+
           <InlineProperties
             task={task}
             labels={labels.data}
@@ -409,6 +437,7 @@ function TaskDetail({ task }: { task: Task }) {
           <TasksEditor
             value={descriptionValue}
             onChange={onDescriptionChange}
+            onBlur={flushDescription}
             variant="doc"
             className="min-h-24"
             placeholder="Add a description… rich text: headings, lists, code, checkboxes, @mentions"
@@ -449,6 +478,7 @@ function TaskDetail({ task }: { task: Task }) {
           </div>
 
           <AttachmentsGrid
+            transport={transport}
             attachments={attachments.data ?? []}
             onRemove={async (attachment) => {
               const result = await rpc.call("deleteAttachment", {
@@ -485,7 +515,11 @@ function TaskDetail({ task }: { task: Task }) {
           {/* TaskActivity draws its own top hairline; adding one here would
               stack two dividers above the Activity header. */}
           <div className="mt-1">
-            <TaskActivity taskId={task.id} taskKey={task.key} />
+            <TaskActivity
+              transport={transport}
+              taskId={task.id}
+              taskKey={task.key}
+            />
           </div>
         </div>
 
@@ -506,16 +540,20 @@ function TaskDetail({ task }: { task: Task }) {
 }
 
 export function DetailView({ taskKey }: DetailViewProps) {
+  const transport = useTasksQuery(
+    async (rpc) => rpc.call("pluginTransport", null),
+    [],
+  );
   const query = useTasksQuery(
     async (rpc) => (await rpc.call("getTaskByKey", { taskKey })).task,
     ["tasks:changed"],
     [taskKey],
   );
 
-  if (query.data === undefined) {
-    return query.error ? (
+  if (query.data === undefined || transport.data === undefined) {
+    return query.error || transport.error ? (
       <div className="flex h-full items-center justify-center p-6 text-sm text-destructive">
-        {query.error}
+        {query.error ?? transport.error}
       </div>
     ) : (
       <DetailSkeleton />
@@ -529,5 +567,5 @@ export function DetailView({ taskKey }: DetailViewProps) {
       </div>
     );
   }
-  return <TaskDetail task={query.data} />;
+  return <TaskDetail task={query.data} transport={transport.data} />;
 }

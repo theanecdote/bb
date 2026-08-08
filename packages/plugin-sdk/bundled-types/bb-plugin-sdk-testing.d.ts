@@ -65,9 +65,8 @@ declare function createFakeSdk(options: {
  * `harness.inspection`, and `harness.lifecycle`; direct members remain aliases.
  *
  * Deliberately different from the real host:
- * - storage is process-local: kv in a Map, `storage.database()` one shared
- *   better-sqlite3 handle in a temp directory (same data across calls, like
- *   the host's shared file), secret settings alongside plain values (no files).
+ * - storage is process-local: kv in a Map and better-sqlite3 handles over one
+ *   temp file, secret settings alongside plain values (no files).
  * - `bb.sdk` is always bound (no listen gate) and every unstubbed method
  *   throws instead of hitting a server.
  * - http auth modes are recorded but not enforced — signature checks and

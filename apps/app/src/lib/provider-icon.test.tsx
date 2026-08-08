@@ -6,6 +6,21 @@ import { describe, expect, it } from "vitest";
 import { getProviderIconInfo } from "./provider-icon";
 
 describe("getProviderIconInfo", () => {
+  it("uses Amp's brand icon for the Amp ACP provider", () => {
+    const iconInfo = getProviderIconInfo("acp-amp");
+    if (iconInfo === undefined) {
+      throw new Error("Expected Amp provider icon info");
+    }
+
+    const view = render(
+      createElement(iconInfo.icon, { className: "size-4 shrink-0" }),
+    );
+    expect(view.getByTitle("Amp")).not.toBeNull();
+    expect(view.container.querySelector("path")?.getAttribute("fill")).toBe(
+      "currentColor",
+    );
+  });
+
   it("prefers a configured provider logo over the generic ACP icon", () => {
     const iconInfo = getProviderIconInfo(
       "acp-do-computer",

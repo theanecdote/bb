@@ -21,6 +21,7 @@ import {
   TooltipTrigger,
 } from "@bb/shared-ui/tooltip";
 import { cn } from "@bb/shared-ui/lib/utils";
+import { LinearStatus } from "./linear-status.js";
 
 const SIDEBAR_WIDTH_KEY = "bb-tasks:sidebar-width";
 const SIDEBAR_DEFAULT_WIDTH = 208; // matches the old fixed w-52
@@ -447,14 +448,17 @@ export function TasksSidebar({
           </>
         )}
       </nav>
-      <div className="shrink-0 border-t border-border-hairline px-2 py-1.5">
-        <SidebarRow
-          active={route.kind === "manage"}
-          onClick={() => onNavigate({ kind: "manage" })}
-        >
-          <Icon name="Settings" className="size-3.5 shrink-0" />
-          <span className="flex-1">Manage</span>
-        </SidebarRow>
+      <div className="shrink-0 border-t border-border-hairline pt-1.5">
+        <LinearStatus />
+        <div className="px-2 pb-1.5">
+          <SidebarRow
+            active={route.kind === "manage"}
+            onClick={() => onNavigate({ kind: "manage" })}
+          >
+            <Icon name="Settings" className="size-3.5 shrink-0" />
+            <span className="flex-1">Manage</span>
+          </SidebarRow>
+        </div>
       </div>
       {presetDialog ? (
         <PresetDialog

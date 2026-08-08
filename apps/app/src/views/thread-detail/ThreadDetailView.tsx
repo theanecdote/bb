@@ -140,7 +140,7 @@ import {
 import { NewTabPage } from "@/components/secondary-panel/NewTabPage";
 import { resolveRightPanelFileVisual } from "@/components/secondary-panel/rightPanelFileVisuals";
 import { COARSE_POINTER_COMPACT_ICON_SIZE_CLASS } from "@bb/shared-ui/coarse-pointer-sizing";
-import { PluginIcon } from "@/components/plugin/PluginIcon";
+import { PluginIcon, PluginWordmark } from "@/components/plugin/PluginIcon";
 import {
   PluginPanelTabContent,
   usePluginPanelActions,
@@ -1444,20 +1444,27 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
               onClose: () => closeTab(tab.id),
             };
           case "plugin-panel": {
-            const actionIcon =
-              pluginThreadPanelActions.find(
-                (action) =>
-                  action.pluginId === tab.pluginId &&
-                  action.id === tab.actionId,
-              )?.icon ?? null;
+            const action = pluginThreadPanelActions.find(
+              (candidate) =>
+                candidate.pluginId === tab.pluginId &&
+                candidate.id === tab.actionId,
+            );
+            const iconOnly = action?.iconOnly === true;
             return {
               id: tab.id,
               filename: tab.title,
               isActive: tab.id === activeFixedSecondaryTabId,
-              leadingVisual: (
+              iconOnly,
+              leadingVisual: iconOnly ? (
+                <PluginWordmark
+                  pluginId={tab.pluginId}
+                  icon={action?.icon ?? null}
+                  className="!h-4 !w-8 max-md:pointer-coarse:!h-5 max-md:pointer-coarse:!w-10"
+                />
+              ) : (
                 <PluginIcon
                   pluginId={tab.pluginId}
-                  icon={actionIcon}
+                  icon={action?.icon ?? null}
                   className={COARSE_POINTER_COMPACT_ICON_SIZE_CLASS}
                 />
               ),

@@ -123,6 +123,11 @@ export const taskSchema = z
     createdAt: z.string(),
     updatedAt: z.string(),
     labelIds: z.array(idSchema),
+    linearMapped: z.boolean(),
+    linearSource: z
+      .object({ identifier: z.string(), url: z.string().url() })
+      .strict()
+      .nullable(),
   })
   .strict();
 
@@ -256,14 +261,40 @@ export const tasksDomainErrorSchema = z
       "project_not_empty",
       "project_prefix_conflict",
       "attachment_referenced",
+      "linear_write_failed",
+      "linear_rate_limited",
+      "linear_project_readonly",
+      "mapped_attachment_forbidden",
     ]),
     message: z.string(),
+    retryAt: z.string().optional(),
   })
   .strict();
 
 const taskMutationResultSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true), task: taskSchema }).strict(),
   z.object({ ok: z.literal(false), error: tasksDomainErrorSchema }).strict(),
+]);
+
+const taskListResultSchema = z.discriminatedUnion("ok", [
+  z
+    .object({
+      ok: z.literal(true),
+      tasks: z.array(taskSchema),
+      nextCursor: z.string().nullable(),
+    })
+    .strict(),
+  z
+    .object({
+      ok: z.literal(false),
+      error: z
+        .object({
+          code: z.literal("stale_cursor"),
+          message: z.string(),
+        })
+        .strict(),
+    })
+    .strict(),
 ]);
 
 const projectMutationResultSchema = z.discriminatedUnion("ok", [
@@ -409,6 +440,74 @@ const updatePresetInputSchema = z
   });
 
 export const tasksRpcContract = defineRpcContract({
+  linearStatus: {
+    input: z.null(),
+    output: z
+      .object({
+        configured: z.boolean(),
+        syncing: z.boolean(),
+        viewerName: z.string().nullable(),
+        activeIssueCount: z.number().int().nonnegative(),
+        lastSuccessfulSyncAt: z.string().nullable(),
+        lastAttemptAt: z.string().nullable(),
+        lastError: z
+          .object({
+            code: z.enum([
+              "LINEAR_MAPPING_ERROR",
+              "LINEAR_RATE_LIMITED",
+              "LINEAR_API_ERROR",
+            ]),
+            message: z.string(),
+          })
+          .strict()
+          .nullable(),
+        retryAt: z.string().nullable(),
+      })
+      .strict(),
+  },
+  linearSyncNow: {
+    input: z.null(),
+    output: z.discriminatedUnion("ok", [
+      z
+        .object({
+          ok: z.literal(true),
+          createdProjects: z.number().int().nonnegative(),
+          createdTasks: z.number().int().nonnegative(),
+          updatedTasks: z.number().int().nonnegative(),
+          deactivatedTasks: z.number().int().nonnegative(),
+        })
+        .strict(),
+      z
+        .object({
+          ok: z.literal(false),
+          createdProjects: z.number().int().nonnegative(),
+          createdTasks: z.number().int().nonnegative(),
+          updatedTasks: z.number().int().nonnegative(),
+          deactivatedTasks: z.number().int().nonnegative(),
+          error: z
+            .object({
+              code: z.enum([
+                "LINEAR_MAPPING_ERROR",
+                "LINEAR_RATE_LIMITED",
+                "LINEAR_API_ERROR",
+              ]),
+              message: z.string(),
+            })
+            .strict(),
+        })
+        .strict(),
+    ]),
+  },
+  pluginTransport: {
+    input: z.null(),
+    output: z
+      .object({
+        pluginId: z.string(),
+        attachmentBaseUrl: z.string(),
+        tokenUrl: z.string(),
+      })
+      .strict(),
+  },
   createFolder: {
     input: z
       .object({
@@ -535,12 +634,7 @@ export const tasksRpcContract = defineRpcContract({
         cursor: nonBlankStringSchema.optional(),
       })
       .strict(),
-    output: z
-      .object({
-        tasks: z.array(taskSchema),
-        nextCursor: z.string().nullable(),
-      })
-      .strict(),
+    output: taskListResultSchema,
   },
   boardMove: {
     input: z
@@ -591,7 +685,25 @@ export const tasksRpcContract = defineRpcContract({
         path: ["body"],
         message: "Comment body cannot be empty",
       }),
-    output: z.object({ comment: commentSchema }).strict(),
+    output: z.discriminatedUnion("ok", [
+      z.object({ ok: z.literal(true), comment: commentSchema }).strict(),
+      z
+        .object({
+          ok: z.literal(false),
+          error: z
+            .object({
+              code: z.enum([
+                "linear_write_failed",
+                "linear_rate_limited",
+                "mapped_attachment_forbidden",
+              ]),
+              message: z.string(),
+              retryAt: z.string().optional(),
+            })
+            .strict(),
+        })
+        .strict(),
+    ]),
   },
   listComments: {
     input: z.object({ taskId: idSchema }).strict(),
@@ -779,6 +891,9 @@ export const tasksRpcContract = defineRpcContract({
 });
 
 export type TasksRpcContract = typeof tasksRpcContract;
+export type PluginTransport = z.infer<
+  (typeof tasksRpcContract)["pluginTransport"]["output"]
+>;
 export type Folder = z.infer<typeof folderSchema>;
 export type Project = z.infer<typeof projectSchema>;
 export type Task = z.infer<typeof taskSchema>;
@@ -794,6 +909,7 @@ export type TaskPullRequest = z.infer<typeof taskPullRequestSchema>;
 export type Preset = z.infer<typeof presetSchema>;
 export type TasksDomainError = z.infer<typeof tasksDomainErrorSchema>;
 export type TaskMutationResult = z.infer<typeof taskMutationResultSchema>;
+export type TaskListResult = z.infer<typeof taskListResultSchema>;
 export type ProjectMutationResult = z.infer<typeof projectMutationResultSchema>;
 export type BbProjectOption = z.infer<
   (typeof tasksRpcContract)["listBbProjects"]["output"]

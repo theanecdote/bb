@@ -59,7 +59,7 @@ describe("tasks storage", () => {
             { count: number }
           >("SELECT COUNT(*) AS count FROM schema_version")
           .get()?.count,
-      ).toBe(5);
+      ).toBe(6);
     } finally {
       await harness.dispose();
     }
@@ -184,6 +184,54 @@ describe("tasks storage", () => {
 
       expect([first.key, second.key]).toEqual(["TSK-1", "TSK-2"]);
       expect(store.getProject(project.id)?.nextTaskNumber).toBe(3);
+    } finally {
+      await harness.dispose();
+    }
+  });
+
+  it("preserves explicit imported task numbers and safely advances allocation", async () => {
+    const { harness, store } = setup();
+    try {
+      const project = createProject(store, "PER");
+      const imported = store.createTask({
+        projectId: project.id,
+        number: 2165,
+        title: "Imported",
+      });
+
+      expect(imported.key).toBe("PER-2165");
+      expect(store.getProject(project.id)?.nextTaskNumber).toBe(2166);
+      expect(
+        store.createTask({ projectId: project.id, title: "Local" }).key,
+      ).toBe("PER-2166");
+    } finally {
+      await harness.dispose();
+    }
+  });
+
+  it("does not revise task lists for normalized no-op updates", async () => {
+    const { db, harness, store } = setup();
+    try {
+      const project = createProject(store, "REV");
+      const task = store.createTask({ projectId: project.id, title: "Task" });
+      const revision = () =>
+        db
+          .prepare<
+            [],
+            { revision: number }
+          >("SELECT revision FROM task_list_revision WHERE id = 1")
+          .get()?.revision;
+      const before = revision();
+
+      expect(store.updateTaskIfChanged(task.id, { title: " Task " })).toEqual({
+        task,
+        changed: false,
+      });
+      expect(revision()).toBe(before);
+      expect(
+        store.updateTaskIfChanged(task.id, { title: "Changed" }).changed,
+      ).toBe(true);
+      expect(revision()).toBe((before ?? 0) + 1);
     } finally {
       await harness.dispose();
     }

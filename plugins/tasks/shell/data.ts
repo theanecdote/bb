@@ -29,18 +29,27 @@ export async function listAllTasks(
   rpc: TasksRpc,
   input: TaskListQuery = {},
 ): Promise<Task[]> {
-  const tasks: Task[] = [];
-  let cursor: string | undefined;
-  do {
-    const page = await rpc.call("listTasks", {
-      ...input,
-      limit: TASKS_PAGE_MAX_LIMIT,
-      ...(cursor === undefined ? {} : { cursor }),
-    });
-    tasks.push(...page.tasks);
-    cursor = page.nextCursor ?? undefined;
-  } while (cursor !== undefined);
-  return tasks;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const tasks: Task[] = [];
+    let cursor: string | undefined;
+    let stale = false;
+    do {
+      const page = await rpc.call("listTasks", {
+        ...input,
+        limit: TASKS_PAGE_MAX_LIMIT,
+        ...(cursor === undefined ? {} : { cursor }),
+      });
+      if (!page.ok) {
+        stale = true;
+        break;
+      }
+      tasks.push(...page.tasks);
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor !== undefined);
+    if (!stale) return tasks;
+    if (attempt === 2) throw new Error("Task list changed too frequently");
+  }
+  throw new Error("Task list changed too frequently");
 }
 
 export const INVALIDATION_CHANNELS = [
@@ -48,6 +57,7 @@ export const INVALIDATION_CHANNELS = [
   "projects:changed",
   "comments:changed",
   "threads:changed",
+  "linear:changed",
 ] as const;
 
 export type InvalidationChannel = (typeof INVALIDATION_CHANNELS)[number];
@@ -70,6 +80,7 @@ export function useInvalidation(
   useRealtime("projects:changed", () => fire("projects:changed"));
   useRealtime("comments:changed", () => fire("comments:changed"));
   useRealtime("threads:changed", () => fire("threads:changed"));
+  useRealtime("linear:changed", () => fire("linear:changed"));
 }
 
 export interface TasksQuery<T> {
@@ -164,6 +175,13 @@ export function usePresets() {
   );
 }
 
+export function useLinearStatus() {
+  return useTasksQuery(
+    async (rpc) => await rpc.call("linearStatus", null),
+    ["linear:changed"],
+  );
+}
+
 export function useSidebarSummary() {
   return useTasksQuery(
     async (rpc) => (await rpc.call("sidebarSummary")).projects,
@@ -191,6 +209,7 @@ export function useMentionItems() {
           .call("searchThreads", { query: trimmed, limit: 5 })
           .catch(() => ({ threads: [] })),
       ]);
+      if (!taskResult.ok) throw new Error(taskResult.error.message);
       return [
         ...taskResult.tasks.slice(0, 8).map((task) => ({
           type: "task" as const,

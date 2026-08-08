@@ -235,6 +235,47 @@ const MIGRATIONS = [
     END
     WHERE permission_mode IN ('workspace-write', 'readonly');
   `,
+  `
+    CREATE TABLE linear_team_projects (
+      linear_team_id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL UNIQUE REFERENCES projects(id) ON DELETE CASCADE,
+      team_key TEXT NOT NULL UNIQUE,
+      team_name TEXT NOT NULL
+    );
+
+    CREATE TABLE linear_issue_tasks (
+      task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+      linear_issue_id TEXT NOT NULL,
+      linear_team_id TEXT NOT NULL REFERENCES linear_team_projects(linear_team_id) ON DELETE CASCADE,
+      identifier TEXT NOT NULL,
+      url TEXT NOT NULL,
+      linear_state_id TEXT NOT NULL,
+      linear_updated_at TEXT NOT NULL,
+      active INTEGER NOT NULL CHECK (active IN (0, 1))
+    );
+
+    CREATE TABLE linear_sync_state (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      last_successful_sync_at TEXT,
+      last_attempt_at TEXT,
+      last_error TEXT,
+      last_error_code TEXT CHECK (last_error_code IN (
+        'LINEAR_MAPPING_ERROR', 'LINEAR_RATE_LIMITED', 'LINEAR_API_ERROR'
+      )),
+      retry_at TEXT
+    );
+    INSERT INTO linear_sync_state (
+      id, last_successful_sync_at, last_attempt_at, last_error,
+      last_error_code, retry_at
+    ) VALUES (1, NULL, NULL, NULL, NULL, NULL);
+
+    CREATE INDEX idx_linear_issue_tasks_team_active
+      ON linear_issue_tasks(linear_team_id, active);
+    CREATE INDEX idx_linear_issue_tasks_issue
+      ON linear_issue_tasks(linear_issue_id);
+    CREATE UNIQUE INDEX idx_linear_issue_tasks_one_active_issue
+      ON linear_issue_tasks(linear_issue_id) WHERE active = 1;
+  `,
 ] as const;
 
 export function initializeTasksSchema(db: PluginDatabase): void {

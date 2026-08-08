@@ -49,6 +49,8 @@ import {
 } from "./args";
 import { bytes, detail, json, table } from "./format";
 import { seedDemo } from "./seed";
+import type { LinearRuntime } from "../linear";
+import type { LinearMutationBridge } from "../linear/mutations";
 
 const ULID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
 const TASK_KEY_PATTERN = /^([A-Z][A-Z0-9]{0,9})-(\d+)$/;
@@ -60,6 +62,7 @@ const ROOT_HELP = `Usage: bb tasks <command> [options]
 
 Commands:
   status                         Show plugin status
+  linear status|sync             Inspect or run Linear synchronization
   project create|list|show|update
   folder create|list|update
   create                         Create a task
@@ -76,6 +79,10 @@ Commands:
   seed-demo                      Create sample data (requires --yes)
 
 Run bb tasks <command> --help for command usage.`;
+
+const LINEAR_HELP = `Usage:
+  bb tasks linear status [--json]
+  bb tasks linear sync [--json]`;
 
 const PROJECT_HELP = `Usage:
   bb tasks project create --name <name> [--prefix X] [--folder <id-or-name>] [--link-bb-project <proj_id>] [--color <color>] [--json]
@@ -380,22 +387,31 @@ async function listAllTasks(
   domain: TasksDomain,
   input: ListTasksInput,
 ): Promise<Task[]> {
-  const tasks: Task[] = [];
-  let cursor = input.cursor;
-  do {
-    const page = tasksRpcContract.listTasks.output.parse(
-      await domain.listTasks(
-        tasksRpcContract.listTasks.input.parse({
-          ...input,
-          limit: TASKS_PAGE_MAX_LIMIT,
-          ...(cursor === undefined ? {} : { cursor }),
-        }),
-      ),
-    );
-    tasks.push(...page.tasks);
-    cursor = page.nextCursor ?? undefined;
-  } while (cursor !== undefined);
-  return tasks;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const tasks: Task[] = [];
+    let cursor = attempt === 0 ? input.cursor : undefined;
+    let stale = false;
+    do {
+      const page = tasksRpcContract.listTasks.output.parse(
+        await domain.listTasks(
+          tasksRpcContract.listTasks.input.parse({
+            ...input,
+            limit: TASKS_PAGE_MAX_LIMIT,
+            ...(cursor === undefined ? {} : { cursor }),
+          }),
+        ),
+      );
+      if (!page.ok) {
+        stale = true;
+        break;
+      }
+      tasks.push(...page.tasks);
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor !== undefined);
+    if (!stale) return tasks;
+    if (attempt === 2) throw new CliError("Task list changed too frequently");
+  }
+  throw new CliError("Task list changed too frequently");
 }
 
 function taskPageLimit(args: ParsedArgs): number {
@@ -670,24 +686,21 @@ async function runProject(
           ...changes,
         })
       : undefined;
-    if (
-      renameInput &&
-      store.projectPrefixExists(renameInput.prefix, project.id)
-    ) {
-      throw new CliError(
-        `Project prefix is already in use: ${renameInput.prefix}`,
-      );
+    let updated = project;
+    if (renameInput) {
+      const result = await domain.renameProjectPrefix(renameInput);
+      if (!result.ok) throw new CliError(result.error.message);
+      updated = result.project;
     }
-    const updated = store.transaction(() =>
-      store.tasks.updateProject(project.id, {
-        prefix: renameInput?.prefix,
+    if (updateInput) {
+      updated = store.tasks.updateProject(project.id, {
         name: updateInput?.name,
         color: updateInput?.color,
         folderId: updateInput?.folderId,
         linkedBbProjectId: updateInput?.linkedBbProjectId,
-      }),
-    );
-    publishProjectsChanged(bb, updated.id);
+      });
+      publishProjectsChanged(bb, updated.id);
+    }
     return args.flags.has("json")
       ? json({ project: updated })
       : `Updated project ${updated.prefix}  ${updated.name}`;
@@ -1019,6 +1032,7 @@ async function runList(
       }),
     ),
   );
+  if (!result.ok) throw new CliError(result.error.message);
   const tasks = [];
   for (const task of result.tasks) {
     const threadResult = tasksRpcContract.listTaskThreads.output.parse(
@@ -1303,6 +1317,7 @@ async function runComment(
   domain: TasksDomain,
   ctx: PluginCliContext,
   argv: string[],
+  mutations: LinearMutationBridge,
 ): Promise<string> {
   const args = parseArgs(argv);
   if (args.flags.has("help")) return COMMENT_HELP;
@@ -1330,15 +1345,25 @@ async function runComment(
   if (body === undefined)
     throw new CliError("missing required --body or --body-file");
   if (!body.trim()) throw new CliError("comment body must not be blank");
-  const comment = await createComment(bb, store, {
-    taskId: task.id,
-    kind: ctx.threadId ? "agent" : "user",
-    authorName: option(args, "author") ?? taskAuthor(ctx),
-    presetName: null,
-    threadId: ctx.threadId ?? null,
-    body,
-    notify: args.flags.has("notify"),
-  });
+  const result = await createComment(
+    bb,
+    store,
+    {
+      taskId: task.id,
+      kind: ctx.threadId ? "agent" : "user",
+      authorName: option(args, "author") ?? taskAuthor(ctx),
+      presetName: null,
+      threadId: ctx.threadId ?? null,
+      body,
+      notify: args.flags.has("notify"),
+    },
+    mutations,
+  );
+  if (!result.ok) {
+    if (args.flags.has("json")) return json(result);
+    throw new CliError(result.error.message);
+  }
+  const comment = result.comment;
   return args.flags.has("json")
     ? json({ comment })
     : `Commented on ${task.key}  ${comment.id}`;
@@ -1426,6 +1451,7 @@ async function runAttachment(
   domain: TasksDomain,
   ctx: PluginCliContext,
   argv: string[],
+  mutations: LinearMutationBridge,
 ): Promise<string> {
   const [action, ...rest] = argv;
   if (!action || action === "--help") return ATTACHMENT_HELP;
@@ -1451,6 +1477,7 @@ async function runAttachment(
     const owner = comment
       ? { commentId: comment.id }
       : { taskId: (await resolveTask(domain, ownerAddress!)).id };
+    mutations.assertAttachmentAllowed(comment?.taskId ?? owner.taskId!);
     const clientHostId = await resolveClientHostId(bb, domain, args, ctx);
     const bytes = await readAttachmentSource(bb, clientHostId, sourcePath);
     const attachment = await saveAttachmentFromBytes(store.tasks, bytes, {
@@ -1460,7 +1487,7 @@ async function runAttachment(
     publishAttachmentChanged(bb, store.tasks, attachment);
     const payload = {
       attachment,
-      url: buildAttachmentUrl(attachment.id),
+      url: buildAttachmentUrl(attachment.id, bb.pluginId),
     };
     return args.flags.has("json")
       ? json(payload)
@@ -1759,6 +1786,7 @@ async function runDispatch(
   store: TasksApiStore,
   domain: TasksDomain,
   argv: string[],
+  mutations: LinearMutationBridge,
 ): Promise<string> {
   const args = parseArgs(argv);
   if (args.flags.has("help")) return DISPATCH_HELP;
@@ -1770,7 +1798,7 @@ async function runDispatch(
     requireOption(args, "preset"),
   );
   const result = delegationRpcContract.delegate.output.parse(
-    await delegationHandlers(bb, store).delegate(
+    await delegationHandlers(bb, store, mutations).delegate(
       delegationRpcContract.delegate.input.parse({
         taskId: task.id,
         presetId: preset.id,
@@ -1871,8 +1899,12 @@ export function registerTasksCli(
   bb: BbPluginApi,
   store: TasksApiStore,
   status: PluginStatus,
+  linear: LinearRuntime,
+  mutations: LinearMutationBridge,
+  domain: TasksDomain,
 ): void {
-  const domain = registerHandlers(bb, store);
+  // Use the RPC service handlers here as well so CLI and UI behavior cannot
+  // drift (including safe error mapping and single-flight synchronization).
   bb.cli.register({
     name: "tasks",
     summary:
@@ -1882,6 +1914,11 @@ export function registerTasksCli(
         name: "status",
         summary: "Show the Tasks plugin name and version",
         usage: "bb tasks status [--json]",
+      },
+      {
+        name: "linear",
+        summary: "Inspect or run Linear synchronization",
+        usage: LINEAR_HELP,
       },
       {
         name: "project",
@@ -1971,6 +2008,60 @@ export function registerTasksCli(
               : `${status.name} ${status.version}`;
             break;
           }
+          case "linear": {
+            const args = parseArgs(rest);
+            assertAllowed(args, []);
+            const [action] = requirePositionals(args, 1, LINEAR_HELP);
+            if (action === "status") {
+              const result = tasksRpcContract.linearStatus.output.parse(
+                await domain.linearStatus(null),
+              );
+              stdout = args.flags.has("json")
+                ? json(result)
+                : detail([
+                    ["Configured", result.configured],
+                    ["Syncing", result.syncing],
+                    ["Viewer", result.viewerName ?? "-"],
+                    ["Active issues", result.activeIssueCount],
+                    [
+                      "Last successful sync",
+                      result.lastSuccessfulSyncAt ?? "-",
+                    ],
+                    ["Last attempt", result.lastAttemptAt ?? "-"],
+                    ["Retry at", result.retryAt ?? "-"],
+                    [
+                      "Last error",
+                      result.lastError
+                        ? `${result.lastError.code}: ${result.lastError.message}`
+                        : "-",
+                    ],
+                  ]);
+            } else if (action === "sync") {
+              const result = tasksRpcContract.linearSyncNow.output.parse(
+                await domain.linearSyncNow(null),
+              );
+              stdout = args.flags.has("json")
+                ? json(result)
+                : detail([
+                    ["OK", result.ok],
+                    ["Created projects", result.createdProjects],
+                    ["Created tasks", result.createdTasks],
+                    ["Updated tasks", result.updatedTasks],
+                    ["Deactivated tasks", result.deactivatedTasks],
+                    [
+                      "Error",
+                      !result.ok
+                        ? `${result.error.code}: ${result.error.message}`
+                        : "-",
+                    ],
+                  ]);
+            } else {
+              throw new CliError(
+                `unknown linear command: ${action}; run bb tasks linear --help`,
+              );
+            }
+            break;
+          }
           case "project":
             stdout = await runProject(bb, store, domain, rest);
             break;
@@ -1995,13 +2086,20 @@ export function registerTasksCli(
             stdout = await runUpdate(bb, domain, ctx, rest);
             break;
           case "comment":
-            stdout = await runComment(bb, store, domain, ctx, rest);
+            stdout = await runComment(bb, store, domain, ctx, rest, mutations);
             break;
           case "label":
             stdout = await runLabel(domain, rest);
             break;
           case "attachment":
-            stdout = await runAttachment(bb, store, domain, ctx, rest);
+            stdout = await runAttachment(
+              bb,
+              store,
+              domain,
+              ctx,
+              rest,
+              mutations,
+            );
             break;
           case "preset":
             stdout = await runPreset(domain, rest);
@@ -2009,7 +2107,7 @@ export function registerTasksCli(
           case "dispatch":
           // Hidden alias kept for compatibility; help advertises "dispatch".
           case "delegate":
-            stdout = await runDispatch(bb, store, domain, rest);
+            stdout = await runDispatch(bb, store, domain, rest, mutations);
             break;
           case "attach":
             stdout = await runAttach(bb, store, domain, ctx, rest);

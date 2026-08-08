@@ -1,24 +1,32 @@
 import { useEffect, useState } from "react";
-import type { Attachment } from "../../shared/contract.js";
+import type {
+  Attachment,
+  PluginTransport,
+} from "../../shared/contract.js";
 import { formatBytes } from "./meta.js";
 import { ConfirmDialog } from "../../components/confirm-dialog.js";
 import { Icon } from "@bb/shared-ui/icon";
 
 /** Frontend twin of attachments/index.ts `buildAttachmentUrl`. */
-export function attachmentDownloadUrl(attachmentId: string): string {
-  return `/api/v1/plugins/tasks/http/attachments/download?attachmentId=${encodeURIComponent(attachmentId)}`;
+export function attachmentDownloadUrl(
+  transport: PluginTransport,
+  attachmentId: string,
+): string {
+  return `${transport.attachmentBaseUrl}/download?attachmentId=${encodeURIComponent(attachmentId)}`;
 }
 
-let tokenPromise: Promise<string> | null = null;
+const tokenPromises = new Map<string, Promise<string>>();
 
 /**
  * The upload route accepts a raw body and therefore uses plugin-token auth
  * (see attachments/README.md); the token comes from the local-auth token
  * route once per session.
  */
-function pluginToken(): Promise<string> {
-  tokenPromise ??= (async () => {
-    const response = await fetch("/api/v1/plugins/tasks/token", {
+function pluginToken(tokenUrl: string): Promise<string> {
+  const existing = tokenPromises.get(tokenUrl);
+  if (existing) return existing;
+  const request = (async () => {
+    const response = await fetch(tokenUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "{}",
@@ -33,27 +41,29 @@ function pluginToken(): Promise<string> {
     }
     return token;
   })();
-  tokenPromise.catch(() => {
-    tokenPromise = null;
+  tokenPromises.set(tokenUrl, request);
+  request.catch(() => {
+    tokenPromises.delete(tokenUrl);
   });
-  return tokenPromise;
+  return request;
 }
 
 /** Client-side twin of attachments/index.ts `AttachmentOwner`. */
 export type AttachmentOwnerRef = { taskId: string } | { commentId: string };
 
 export async function uploadAttachment(
+  transport: PluginTransport,
   file: File,
   owner: AttachmentOwnerRef,
 ): Promise<{ attachmentId: string; url: string }> {
-  const token = await pluginToken();
+  const token = await pluginToken(transport.tokenUrl);
   const query = new URLSearchParams({
     ...owner,
     fileName: file.name || "attachment",
     mime: file.type || "application/octet-stream",
   });
   const response = await fetch(
-    `/api/v1/plugins/tasks/http/attachments/upload?${query.toString()}`,
+    `${transport.attachmentBaseUrl}/upload?${query.toString()}`,
     {
       method: "POST",
       headers: { "x-bb-plugin-token": token },
@@ -74,9 +84,11 @@ export async function uploadAttachment(
 
 /** Full-viewport image overlay, shared by the detail grid and comment feed. */
 export function Lightbox({
+  transport,
   attachment,
   onClose,
 }: {
+  transport: PluginTransport;
   attachment: Attachment;
   onClose: () => void;
 }) {
@@ -102,7 +114,7 @@ export function Lightbox({
       onClick={onClose}
     >
       <img
-        src={attachmentDownloadUrl(attachment.id)}
+        src={attachmentDownloadUrl(transport, attachment.id)}
         alt={attachment.fileName}
         className="max-h-full max-w-full rounded-md shadow-md"
         onClick={(event) => event.stopPropagation()}
@@ -137,10 +149,12 @@ function RemovalSpinner() {
 }
 
 export function AttachmentsGrid({
+  transport,
   attachments,
   onRemove,
   onError,
 }: {
+  transport: PluginTransport;
   attachments: Attachment[];
   /** When provided, each attachment gains a remove affordance. */
   onRemove?: (attachment: Attachment) => Promise<void>;
@@ -211,7 +225,7 @@ export function AttachmentsGrid({
       className="flex items-center gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-sm shadow-2xs"
     >
       <a
-        href={attachmentDownloadUrl(attachment.id)}
+        href={attachmentDownloadUrl(transport, attachment.id)}
         download={attachment.fileName}
         className="flex min-w-0 items-center gap-2 rounded-sm hover:bg-state-hover"
       >
@@ -241,7 +255,7 @@ export function AttachmentsGrid({
         onClick={() => setLightbox(attachment)}
       >
         <img
-          src={attachmentDownloadUrl(attachment.id)}
+          src={attachmentDownloadUrl(transport, attachment.id)}
           alt={attachment.fileName}
           className="block h-24 w-36 object-cover transition-opacity group-hover:opacity-90"
         />
@@ -272,7 +286,11 @@ export function AttachmentsGrid({
         </div>
       ) : null}
       {lightbox ? (
-        <Lightbox attachment={lightbox} onClose={() => setLightbox(null)} />
+        <Lightbox
+          transport={transport}
+          attachment={lightbox}
+          onClose={() => setLightbox(null)}
+        />
       ) : null}
       <ConfirmDialog
         open={confirm !== null}

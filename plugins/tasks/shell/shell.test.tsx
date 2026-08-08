@@ -54,13 +54,28 @@ const folder = {
 
 function seededRpc(overrides: Record<string, unknown> = {}) {
   return {
+    linearStatus: () => ({
+      configured: false,
+      syncing: false,
+      viewerName: null,
+      activeIssueCount: 0,
+      lastSuccessfulSyncAt: null,
+      lastAttemptAt: null,
+      lastError: null,
+      retryAt: null,
+    }),
+    pluginTransport: () => ({
+      pluginId: "tasks",
+      attachmentBaseUrl: "/api/v1/plugins/tasks/attachments",
+      tokenUrl: "/api/v1/plugins/tasks/token",
+    }),
     listProjects: () => ({ projects: [project] }),
     listFolders: () => ({ folders: [folder] }),
     listPresets: () => ({ presets: [] }),
     sidebarSummary: () => ({
       projects: [{ projectId: PROJECT_ID, taskCount: 3, activeAgentCount: 1 }],
     }),
-    listTasks: () => ({ tasks: [] }),
+    listTasks: () => ({ ok: true, tasks: [] }),
     getTaskByKey: () => ({ task: null }),
     ...overrides,
   };
@@ -152,7 +167,7 @@ describe("task pager", () => {
       { subPath: "task/TSK-4" },
       {
         rpc: seededRpc({
-          listTasks: () => ({ tasks }),
+          listTasks: () => ({ ok: true, tasks }),
           listLabels: () => ({ labels: [] }),
           listAttachments: () => ({ attachments: [] }),
           listTaskThreads: () => ({ taskThreads: [] }),
@@ -302,7 +317,7 @@ describe("tasks app shell", () => {
         rpc: seededRpc({
           listTasks: () => {
             requests += 1;
-            return { tasks: [{ ...task, title }] };
+            return { ok: true, tasks: [{ ...task, title }] };
           },
           listLabels: () => ({ labels: [] }),
           listAttachments: () => ({ attachments: [] }),
@@ -341,7 +356,7 @@ describe("tasks app shell", () => {
         rpc: seededRpc({
           listTasks: async () => {
             if (!serverAvailable) throw new Error("server unavailable");
-            return { tasks: [task] };
+            return { ok: true, tasks: [task] };
           },
           listLabels: () => ({ labels: [] }),
           listAttachments: () => ({ attachments: [] }),
@@ -375,7 +390,7 @@ describe("tasks app shell", () => {
       { subPath: "all" },
       {
         rpc: seededRpc({
-          listTasks: () => ({ tasks: [{ ...task, title }] }),
+          listTasks: () => ({ ok: true, tasks: [{ ...task, title }] }),
           listLabels: () => ({ labels: [] }),
           listAttachments: () => ({ attachments: [] }),
           listTaskThreads: () => ({ taskThreads: [] }),
@@ -403,6 +418,7 @@ describe("tasks app shell", () => {
       {
         rpc: seededRpc({
           listTasks: () => ({
+            ok: true,
             tasks: [
               {
                 ...pagerTask("TSK-4", "todo", 1),
@@ -477,13 +493,13 @@ describe("tasks app shell", () => {
           listTasks: () => {
             listTasksCalls += 1;
             if (!holdListTasks) {
-              return { tasks: [{ ...task, title }] };
+              return { ok: true, tasks: [{ ...task, title }] };
             }
             // Generation-driven fetches stay pending until released so the
             // shared in-flight bit tracks real request completion.
             return new Promise((resolve) => {
               pendingResolvers.push(() =>
-                resolve({ tasks: [{ ...task, title }] }),
+                resolve({ ok: true, tasks: [{ ...task, title }] }),
               );
             });
           },
@@ -585,7 +601,7 @@ describe("tasks app shell", () => {
         rpc: seededRpc({
           listTasks: () => {
             if (shouldFail) throw new Error("refresh failed");
-            return { tasks: [{ ...task, title }] };
+            return { ok: true, tasks: [{ ...task, title }] };
           },
           listLabels: () => ({ labels: [] }),
           listAttachments: () => ({ attachments: [] }),
@@ -632,7 +648,7 @@ describe("tasks app shell", () => {
       {
         rpc: seededRpc({
           getTaskByKey: () => ({ task: { ...task, title } }),
-          listTasks: () => ({ tasks: [{ ...task, title }] }),
+          listTasks: () => ({ ok: true, tasks: [{ ...task, title }] }),
           listLabels: () => ({ labels: [] }),
           listAttachments: () => ({ attachments: [] }),
           listTaskThreads: () => ({ taskThreads: [] }),
@@ -658,10 +674,61 @@ describe("tasks app shell", () => {
     );
   });
 
+  it("renders a canonical Linear source action only for mapped tasks", async () => {
+    const mapped = {
+      ...pagerTask("TSK-4", "todo", 1),
+      title: "Linear task",
+      description: "",
+      labelIds: [],
+      linearMapped: true,
+      linearSource: {
+        identifier: "PER-2165",
+        url: "https://linear.app/acme/issue/PER-2165",
+      },
+    };
+    const detailRpc = (task: typeof mapped) =>
+      seededRpc({
+        getTaskByKey: () => ({ task }),
+        listTasks: () => ({ ok: true, tasks: [task] }),
+        listLabels: () => ({ labels: [] }),
+        listAttachments: () => ({ attachments: [] }),
+        listTaskThreads: () => ({ taskThreads: [] }),
+        listTaskPullRequests: () => ({
+          pullRequests: [],
+          unavailableThreadIds: [],
+        }),
+        listComments: () => ({ comments: [] }),
+      });
+    let slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "task/TSK-4" },
+      { rpc: detailRpc(mapped) },
+    );
+    const link = await slot.findByRole("link", { name: "Open in Linear" });
+    expect(link.getAttribute("href")).toBe(mapped.linearSource.url);
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toBe("noreferrer");
+    expect(slot.getByText("PER-2165")).toBeTruthy();
+    slot.lifecycle.unmount();
+
+    const unmapped = { ...mapped, linearMapped: false, linearSource: null };
+    slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "task/TSK-4" },
+      { rpc: detailRpc(unmapped as typeof mapped) },
+    );
+    await slot.findByRole("textbox", { name: "Task title" });
+    expect(slot.queryByRole("link", { name: "Open in Linear" })).toBeNull();
+  });
+
   it("shows the empty state and opens the New project dialog", async () => {
-    const slot = renderSlot(app.navPanels[0]!, { subPath: "" }, {
-      rpc: emptyRpc,
-    });
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "" },
+      {
+        rpc: emptyRpc,
+      },
+    );
     await slot.findByText("No projects yet");
     fireEvent.click(slot.getByRole("button", { name: /New project/ }));
     await slot.findByText("Projects group tasks under a shared key prefix.");
@@ -697,18 +764,26 @@ describe("tasks app shell", () => {
   });
 
   it("routes 'manage' to the manage panel via the sidebar footer", async () => {
-    const slot = renderSlot(app.navPanels[0]!, { subPath: "manage" }, {
-      rpc: seededRpc({ listLabels: () => ({ labels: [] }) }),
-    });
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "manage" },
+      {
+        rpc: seededRpc({ listLabels: () => ({ labels: [] }) }),
+      },
+    );
     await slot.findByText("Labels, agent presets, and folders.");
     // The sidebar footer row is highlighted and present on every route.
     expect(slot.getByRole("button", { name: "Manage" })).toBeDefined();
   });
 
   it("opens quick-create on bare 'c' but not from editable targets or dialogs", async () => {
-    const slot = renderSlot(app.navPanels[0]!, { subPath: "all" }, {
-      rpc: seededRpc(),
-    });
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "all" },
+      {
+        rpc: seededRpc(),
+      },
+    );
     await slot.findByText("Tasks Plugin");
     fireEvent.keyDown(window, { key: "c" });
     // The New task dialog mounts (project select defaults to the only project).
@@ -734,22 +809,26 @@ describe("tasks app shell", () => {
       builtin: false,
       createdAt: "2026-07-15T00:00:00.000Z",
     };
-    const slot = renderSlot(app.navPanels[0]!, { subPath: "all" }, {
-      rpc: seededRpc({
-        listPresets: () => ({
-          presets: [
-            basePreset,
-            {
-              ...basePreset,
-              id: "01HZZZZZZZZZZZZZZZZZZZZZE2",
-              name: "Worktree env",
-              environmentKind: "new-worktree",
-              baseBranch: "main",
-            },
-          ],
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "all" },
+      {
+        rpc: seededRpc({
+          listPresets: () => ({
+            presets: [
+              basePreset,
+              {
+                ...basePreset,
+                id: "01HZZZZZZZZZZZZZZZZZZZZZE2",
+                name: "Worktree env",
+                environmentKind: "new-worktree",
+                baseBranch: "main",
+              },
+            ],
+          }),
         }),
-      }),
-    });
+      },
+    );
     await slot.findByText("Worktree env");
     expect(slot.getByText("Default env")).toBeDefined();
     expect(slot.getAllByLabelText("Spawns a new worktree")).toHaveLength(1);
@@ -757,14 +836,18 @@ describe("tasks app shell", () => {
 
   it("refetches sidebar data when invalidation channels fire", async () => {
     let projectCalls = 0;
-    const slot = renderSlot(app.navPanels[0]!, { subPath: "all" }, {
-      rpc: seededRpc({
-        listProjects: () => {
-          projectCalls += 1;
-          return { projects: [project] };
-        },
-      }),
-    });
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "all" },
+      {
+        rpc: seededRpc({
+          listProjects: () => {
+            projectCalls += 1;
+            return { projects: [project] };
+          },
+        }),
+      },
+    );
     await slot.findByText("Tasks Plugin");
     const before = projectCalls;
     await slot.emitRealtime("projects:changed", { projectId: null });

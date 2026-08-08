@@ -183,6 +183,7 @@ describe("collectPluginAppRegistrations", () => {
         id: "issue",
         title: "Issue",
         icon: "Columns",
+        iconOnly: true,
         component: Component,
         run,
       });
@@ -244,6 +245,7 @@ describe("collectPluginAppRegistrations", () => {
         id: "issue",
         title: "Issue",
         icon: "Columns",
+        iconOnly: true,
         component: Component,
         run,
       },
@@ -573,6 +575,19 @@ describe("collectPluginAppRegistrations", () => {
           });
         }),
       /"run" must be a function/,
+    ],
+    [
+      "thread panel action with a non-boolean iconOnly",
+      () =>
+        definePluginApp((app) => {
+          app.slots.threadPanelAction({
+            id: "x",
+            title: "X",
+            component: Component,
+            iconOnly: "yes" as never,
+          });
+        }),
+      /"iconOnly" must be a boolean/,
     ],
     [
       "missing component",

@@ -647,11 +647,20 @@ function collectRegistrations(
         ) {
           throw new Error(`${kind}: "layout" must be "padded" or "flush"`);
         }
+        if (
+          registration.iconOnly !== undefined &&
+          typeof registration.iconOnly !== "boolean"
+        ) {
+          throw new Error(`${kind}: "iconOnly" must be a boolean when set`);
+        }
         captured.threadPanelActions.push({
           id,
           title: requireNonEmptyString(kind, "title", registration.title),
           ...(registration.icon !== undefined
             ? { icon: requireNonEmptyString(kind, "icon", registration.icon) }
+            : {}),
+          ...(registration.iconOnly !== undefined
+            ? { iconOnly: registration.iconOnly }
             : {}),
           component: requireComponent(kind, registration.component),
           ...(registration.layout !== undefined

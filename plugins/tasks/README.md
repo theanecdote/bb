@@ -128,6 +128,75 @@ portable in task content.
 Mentioning a task key such as `PROD-1` in an agent request also activates the
 Tasks skill, which directs the worker to read and update the tracked task.
 
+## Linear integration operation
+
+The Linear-enabled replacement is deployed from the merged
+`https://github.com/theanecdote/bb` fork checkout, never from an upstream PR.
+Keep the bundled `tasks` plugin disabled and install the checkout as a local
+path plugin:
+
+```sh
+bb plugin install --yes path:<deployment-worktree>/plugins/tasks
+```
+
+The persistent deployment worktree must have package name
+`bb-plugin-tasks-linear` and display name `Tasks + Linear`; run
+`pnpm install --no-frozen-lockfile`, build `@bb/plugin-sdk`, and then build
+`bb-plugin-tasks-linear`. The local manifest and lockfile changes are deployment
+state and must not be pushed. Before every reinstall or reload after a git
+operation, verify that `node -p "require('./plugins/tasks/package.json').name"`
+still prints `bb-plugin-tasks-linear`. BB derives frontend metadata and CSS
+scope from that name, so a silently reverted rename can produce an incorrectly
+styled app even if registration remains `tasks-linear`. Do not force-add
+`dist`, hand-edit artifact metadata, or create a distribution branch.
+
+The installed plugin ID must be `tasks-linear`, while its command remains
+`bb tasks`. It owns a database separate from the disabled builtin `tasks`
+plugin; replacement data is not migrated between them. Persisted attachment
+URLs contain the plugin ID, so once this replacement is used, `tasks-linear`
+is permanent and must not be renamed again. Keep the builtin disabled to avoid
+a CLI collision.
+
+Create a Linear personal API key in Linear's settings. Enter it only in the
+plugin's **Linear API key** secret setting in BB, then reload and enable the
+plugin. Never put the key in CLI arguments, chat, logs, RPC output, or source.
+For healthy rotation, create the replacement key first, update the BB secret
+setting, reload the plugin so the next operation uses it, run a successful
+manual sync, and only then revoke the old key. `LINEAR_SMOKE_API_KEY` is solely
+an opt-in developer variable for the read-only smoke test; production does not
+read it.
+
+Synchronization starts when the configured plugin starts, polls every five
+minutes, and can be requested with **Sync now** or `bb tasks linear sync`.
+`bb tasks linear status` reports connection, viewer, last success, active
+mapping count, and safe errors. Concurrent sync requests share one run. Rate
+limits suppress scheduled work until Linear's reported retry time; use a later
+manual sync rather than expecting an autonomous retry loop. The integration
+uses polling only: do not expose a webhook or public share.
+
+Linear is authoritative for mapped issue status, title, description, priority,
+and due date. Mapped projects are import-only, so tasks cannot be created in
+them locally. Link each imported Tasks project to the correct BB project before
+delegating; delegation is unavailable until then. Linear sub-issues are
+flattened into independent BB tasks. Labels and subtasks remain local.
+Attachments on mapped tasks or their comments are rejected, as are user
+comments containing BB attachment URLs. Ordinary user comments are written to
+Linear; agent and system comments remain local.
+
+After installation, manually sync and verify the authenticated viewer, exact
+issue keys, and no duplicates before linking a project. Installation and smoke
+checks must not mutate Linear: confirm no unexpected comments, state changes,
+or other issue edits, and confirm no key appears in git, logs, or RPC output.
+
+### Rollback
+
+Disable and remove `tasks-linear`; its separate data is not migrated back.
+Re-enable `builtin:tasks` when the builtin resolves from a packaged copy or a
+different source checkout. Only when BB itself runs from the deployment
+worktree, first restore the package name to `bb-plugin-tasks`, run
+`pnpm install`, and then re-enable the builtin plugin. Rollback must not create
+an upstream PR, webhook/public share, or Linear mutation.
+
 ## Known limitations
 
 - The **Auto** delegation preset is deferred; choose an explicit preset.

@@ -44,13 +44,18 @@ export function getPluginLogoUrls(): ReadonlyMap<string, PluginLogoUrls> {
   return logoUrls;
 }
 
+/** Full branding resolved from the latest plugin inventory. */
+export function usePluginBranding(pluginId: string): PluginLogoUrls | null {
+  const entries = useSyncExternalStore(subscribePluginLogos, getPluginLogoUrls);
+  return entries.get(pluginId) ?? null;
+}
+
 /** Compact branding resolved from the latest plugin inventory. */
 export function usePluginCompactBranding(
   pluginId: string,
 ): Pick<PluginLogoUrls, "icon" | "compactIconUrl"> | null {
-  const entries = useSyncExternalStore(subscribePluginLogos, getPluginLogoUrls);
-  const branding = entries.get(pluginId);
-  return branding === undefined
+  const branding = usePluginBranding(pluginId);
+  return branding === null
     ? null
     : { icon: branding.icon, compactIconUrl: branding.compactIconUrl };
 }

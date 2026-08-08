@@ -87,7 +87,7 @@ function renderList() {
         listPresets: () => ({ presets: [] }),
         sidebarSummary: () => ({ projects: [] }),
         listLabels: () => ({ labels }),
-        listTasks: () => ({ tasks: [busyTask] }),
+        listTasks: () => ({ ok: true, tasks: [busyTask] }),
         listTaskThreads: () => ({ taskThreads: [workerThread] }),
         listComments: () => ({ comments: [] }),
         listAttachments: () => ({ attachments: [] }),

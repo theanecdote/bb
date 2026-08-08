@@ -61,12 +61,19 @@ function detailRpc(
   overrides: Record<string, unknown> = {},
 ) {
   return {
+    pluginTransport: () => ({
+      pluginId: "tasks",
+      attachmentBaseUrl: "/attachments",
+      tokenUrl: "/token",
+    }),
     listProjects: () => ({ projects: [projectRow(linkedBbProjectId)] }),
     listFolders: () => ({ folders: [] }),
     listPresets: () => ({ presets: [] }),
     sidebarSummary: () => ({ projects: [] }),
     listTasks: (input: { parentTaskId?: string } | null) =>
-      input?.parentTaskId ? { tasks: [] } : { tasks: [task] },
+      input?.parentTaskId
+        ? { ok: true, tasks: [] }
+        : { ok: true, tasks: [task] },
     getTaskByKey: () => ({ task }),
     listLabels: () => ({ labels: [] }),
     listAttachments: () => ({ attachments: [] }),

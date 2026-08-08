@@ -31,8 +31,17 @@ const WIRE_SOURCE = `
     cyclicResult: { input: z.null(), output: z.any() },
     nonFiniteResult: { input: z.null(), output: z.any() },
     validated: { input: z.object({ value: z.string().min(1) }), output: z.string() },
+    listTasks: {
+      input: z.object({ cursor: z.number().optional() }),
+      output: z.discriminatedUnion("ok", [
+        z.object({ ok: z.literal(true), tasks: z.array(z.string()), nextCursor: z.number().nullable() }),
+        z.object({ ok: z.literal(false), error: z.object({ code: z.literal("stale_cursor"), message: z.string() }) }),
+      ]),
+    },
+    bumpTaskRevision: { input: z.null(), output: z.object({ revision: z.number() }) },
   });
   export default function plugin(bb: any) {
+    let taskRevision = 1;
     bb.http.route("GET", "/hello", (c: any) => c.json({ message: "hello v1" }));
     bb.http.route("POST", "/echo", async (c: any) =>
       c.json({ echoed: await c.req.json() }));
@@ -69,6 +78,15 @@ const WIRE_SOURCE = `
         globalThis.__validatedRpcCalls = (globalThis.__validatedRpcCalls ?? 0) + 1;
         return input.value;
       },
+      listTasks: (input: any) => {
+        if (input.cursor !== undefined && input.cursor !== taskRevision) {
+          return { ok: false, error: { code: "stale_cursor", message: "Task list cursor is stale" } };
+        }
+        return input.cursor === undefined
+          ? { ok: true, tasks: ["first"], nextCursor: taskRevision }
+          : { ok: true, tasks: ["second"], nextCursor: null };
+      },
+      bumpTaskRevision: () => ({ revision: ++taskRevision }),
     });
   }
 `;
@@ -471,6 +489,32 @@ describe("plugin wire surfaces (http/rpc dispatcher + realtime)", () => {
       error: {
         code: "unknown_method",
         message: 'plugin "wire" has no rpc method "missing"',
+      },
+    });
+  });
+
+  it("rpc preserves a stale task-page cursor as a contract result", async () => {
+    const firstPage = await rpc(harness, "listTasks", {});
+    expect(firstPage.status).toBe(200);
+    const firstBody = (await firstPage.json()) as {
+      ok: true;
+      result: { ok: true; nextCursor: number };
+    };
+
+    await rpc(harness, "bumpTaskRevision", null);
+    const stalePage = await rpc(harness, "listTasks", {
+      cursor: firstBody.result.nextCursor,
+    });
+
+    expect(stalePage.status).toBe(200);
+    expect(await stalePage.json()).toEqual({
+      ok: true,
+      result: {
+        ok: false,
+        error: {
+          code: "stale_cursor",
+          message: "Task list cursor is stale",
+        },
       },
     });
   });

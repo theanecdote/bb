@@ -96,7 +96,7 @@ function renderList() {
         listPresets: () => ({ presets: [] }),
         sidebarSummary: () => ({ projects: [] }),
         listLabels: () => ({ labels: [] }),
-        listTasks: () => ({ tasks }),
+        listTasks: () => ({ ok: true, tasks }),
         listTaskThreads: () => ({ taskThreads: [] }),
         listComments: () => ({ comments: [] }),
         listAttachments: () => ({ attachments: [] }),
@@ -118,7 +118,9 @@ async function rowOrder(slot: ReturnType<typeof renderList>) {
 async function selectSort(slot: ReturnType<typeof renderList>, label: string) {
   fireEvent.click(slot.getByRole("button", { name: /Sort/ }));
   const drawer = await slot.findByRole("dialog", { name: "Sort tasks" });
-  fireEvent.click(within(drawer).getByRole("menuitemcheckbox", { name: label }));
+  fireEvent.click(
+    within(drawer).getByRole("menuitemcheckbox", { name: label }),
+  );
 }
 
 describe("list sorting (compact viewport)", () => {
@@ -128,12 +130,22 @@ describe("list sorting (compact viewport)", () => {
 
     await selectSort(slot, "Priority");
     await waitFor(async () =>
-      expect(await rowOrder(slot)).toEqual(["TSK-2", "TSK-1", "TSK-4", "TSK-3"]),
+      expect(await rowOrder(slot)).toEqual([
+        "TSK-2",
+        "TSK-1",
+        "TSK-4",
+        "TSK-3",
+      ]),
     );
 
     await selectSort(slot, "Due date");
     await waitFor(async () =>
-      expect(await rowOrder(slot)).toEqual(["TSK-1", "TSK-2", "TSK-4", "TSK-3"]),
+      expect(await rowOrder(slot)).toEqual([
+        "TSK-1",
+        "TSK-2",
+        "TSK-4",
+        "TSK-3",
+      ]),
     );
   });
 
@@ -153,7 +165,9 @@ describe("list sorting (compact viewport)", () => {
       options.map((option) => option.getAttribute("aria-checked")),
     ).toEqual(["true", "false", "false"]);
 
-    fireEvent.click(within(drawer).getByRole("menuitemcheckbox", { name: "Priority" }));
+    fireEvent.click(
+      within(drawer).getByRole("menuitemcheckbox", { name: "Priority" }),
+    );
     await waitFor(() =>
       expect(slot.getByRole("button", { name: /Sort/ }).textContent).toContain(
         "Priority",

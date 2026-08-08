@@ -398,6 +398,15 @@ For review or fix pipelines, get the environment ID from
   `bb plugin install tasks` before using `bb tasks ...`.
 - Start tracked work with `bb tasks show <key-or-id> --json`. Fetch relevant
   files with `bb tasks attachment get <attachment-id> --out <path>`.
+- Inspect or trigger Linear synchronization with `bb tasks linear status
+  [--json]` and `bb tasks linear sync [--json]`. Neither command accepts or
+  prints a credential; configure the secret `linearApiKey` plugin setting.
+- Linear-backed projects are import-only and require a BB project link before
+  delegation. Linear owns keys/numbers, title, description, priority, due date,
+  and workflow status. BB owns labels, hierarchy, project color, local comments,
+  and attached threads. Mapped-task attachments are refused. `bb tasks comment`
+  sends user comments to Linear; agent/system comments and the existing Linear
+  transcript are not mirrored.
 - Leave substantive milestone updates with `bb tasks comment <key-or-id>
 --body <markdown>` and attach result artifacts with `bb tasks attachment
 add <key-or-comment-id> --file <path>` (task key = task-level; comment ID

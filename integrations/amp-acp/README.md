@@ -1,7 +1,7 @@
 # Patched Amp ACP Binary
 
 This directory records the approved, narrowly patched exception to the
-Registry `amp-acp` 0.9.0 binary. The patch adds durable ACP `session/load`
+Registry `amp-acp` 0.9.0 binary. The first patch adds durable ACP `session/load`
 support required because BB starts a fresh ACP subprocess for later turns.
 It persists only `{ version, sessionId, threadId }`, allowing the new process
 to invoke `amp threads continue <threadId>` without storing prompts,
@@ -17,11 +17,20 @@ timeline and does not require an adapter-side transcript mirror.
 - Registry archive: `amp-acp` 0.9.0 Linux x86_64
 - Registry archive SHA-256: `afaa50a152eb86a8ff21e354ded63fe2d21b730859692e3a60b2c4c9ef23df31`
 - Patch: `patches/0001-bb-session-load.patch`
+- Patch: `patches/0002-amp-mode-executor.patch`
+
+The second patch exposes each Amp mode with an explicit executor: `Machine`
+uses the external SDK's `local` executor in the selected BB environment, while
+`Orb` uses the SDK's `orb` executor. The executor is supplied only when creating
+a thread. Continued Amp threads retain their original executor and never switch
+silently. This ACP path does not target named live Runners; named Runner handoff
+remains the companion plugin's stable Amp Plugin API responsibility.
 
 Build from a clean clone at the listed source commit:
 
 ```bash
 git apply --unidiff-zero /home/exedev/theanecdote-bb/integrations/amp-acp/patches/0001-bb-session-load.patch
+git apply --unidiff-zero /home/exedev/theanecdote-bb/integrations/amp-acp/patches/0002-amp-mode-executor.patch
 npx --yes bun@1.2.20 install
 npx --yes bun@1.2.20 build src/index.ts --compile --target=bun-linux-x64 --outfile dist/amp-acp
 ```

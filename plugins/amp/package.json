@@ -18,7 +18,11 @@
     "name": "Amp",
     "description": "Send explicit BB handoffs to existing named Amp Runners.",
     "branding": {
-      "icon": "Zap"
+      "icon": "./icon.svg",
+      "logo": {
+        "light": "./logo.svg",
+        "dark": "./logo-dark.svg"
+      }
     },
     "server": "./server.ts",
     "app": "./app.tsx"
@@ -29,18 +33,27 @@
   ],
   "scripts": {
     "build": "node --conditions=source --import tsx ../../scripts/build-official-plugins.mjs amp",
-    "test": "node --import tsx --test tests/*.test.ts",
+    "test": "node --import tsx --experimental-test-module-mocks --test tests/*.test.ts tests/*.test.tsx",
+    "preview": "node tests/preview.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@bb/shared-ui": "workspace:*",
+    "@hugeicons/core-free-icons": "^4.2.3",
+    "@hugeicons/react": "^1.1.9",
+    "@radix-ui/react-slot": "^1.3.3",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^3.6.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@bb/plugin-sdk": "workspace:*",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
     "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "esbuild": "^0.28.1",
     "tsx": "^4.23.1",
     "typescript": "npm:@typescript/typescript6@^6.0.2"
   }

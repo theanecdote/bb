@@ -4,6 +4,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { BotIcon } from "@hugeicons/core-free-icons";
 import type { CommentProvider } from "../../shared/contract.js";
 import {
+  AmpIcon,
   ClaudeIcon,
   CursorIcon,
   GrokIcon,
@@ -22,6 +23,7 @@ import { HermesAgentIcon } from "./provider-hermes-icon.js";
  * names the provider for screen readers.
  */
 const BRAND_ICONS: Record<string, ComponentType<{ className?: string }>> = {
+  "acp-amp": AmpIcon,
   codex: OpenAiIcon,
   "claude-code": ClaudeIcon,
   pi: PiIcon,

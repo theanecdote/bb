@@ -2,9 +2,13 @@ import {
   createFakePluginHost,
   makeThreadResponse,
 } from "@bb/plugin-sdk/testing";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createStore } from "../api";
 import type { Comment, Project, Task } from "../db";
+import { LinearApiError } from "../linear/client";
+import { createLinearMutationBridge } from "../linear/mutations";
+import { createLinearMappingStore } from "../linear/store";
+import type { LinearClient } from "../linear/types";
 import { delegationRpcContract } from "./contract";
 import { buildSeedPrompt, registerDelegation } from ".";
 
@@ -31,9 +35,102 @@ function createTestPreset(
 }
 
 describe("task delegation", () => {
+  it("recovers safely when mapped workflow lookup fails after spawn", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "tasks-linear",
+      sdk: {
+        threads: {
+          spawn: async () => ({ id: "thr_mapped" }),
+          get: async () =>
+            makeThreadResponse({ id: "thr_mapped", status: "starting" }),
+        },
+      },
+    });
+    const database = bb.storage.database();
+    const store = createStore(database);
+    const mappings = createLinearMappingStore(database);
+    const project = store.tasks.createProject({
+      name: "Mapped",
+      prefix: "MAP",
+      color: "blue",
+      linkedBbProjectId: "proj_bb",
+    });
+    const task = store.tasks.createTask({
+      projectId: project.id,
+      title: "Delegate mapped",
+      status: "todo",
+    });
+    mappings.upsertTeamMapping({
+      linearTeamId: "team-1",
+      projectId: project.id,
+      teamKey: "MAP",
+      teamName: "Mapped",
+    });
+    mappings.upsertIssueMapping({
+      linearIssueId: "issue-1",
+      taskId: task.id,
+      linearTeamId: "team-1",
+      identifier: "MAP-1",
+      url: "https://linear.app/acme/issue/MAP-1",
+      linearStateId: "todo",
+      linearUpdatedAt: "2026-08-08T00:00:00.000Z",
+      active: true,
+    });
+    const client: LinearClient = {
+      viewerAssignedIssues: vi.fn(),
+      issuesByIds: vi.fn(),
+      createComment: vi.fn(),
+      teamStates: vi.fn(async () => {
+        throw new LinearApiError("LINEAR_API_ERROR", "unsafe remote detail");
+      }),
+      updateIssue: vi.fn(),
+    };
+    const mutations = createLinearMutationBridge({ client, mappings });
+    registerDelegation(bb, store, mutations);
+    const preset = createTestPreset(store);
+
+    const result = await harness.callRpc("delegate", {
+      taskId: task.id,
+      presetId: preset.id,
+    });
+
+    expect(result).toEqual({ threadId: "thr_mapped" });
+    expect(store.tasks.getTask(task.id)?.status).toBe("todo");
+    expect(store.tasks.listTaskThreads(task.id)).toEqual([
+      expect.objectContaining({ threadId: "thr_mapped" }),
+    ]);
+    expect(store.tasks.listComments(task.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "system",
+          threadId: "thr_mapped",
+          body: "The thread was dispatched, but Linear rejected the status change. The task status was not changed.",
+        }),
+      ]),
+    );
+    expect(mappings.getSyncState()).toMatchObject({
+      lastErrorCode: "LINEAR_MAPPING_ERROR",
+      lastError:
+        "A delegated thread was attached, but its mapped Linear status could not be updated. Reconcile the mapping and retry synchronization.",
+    });
+    expect(mappings.getSyncState().lastError).not.toContain(
+      "unsafe remote detail",
+    );
+    expect(client.updateIssue).not.toHaveBeenCalled();
+    expect(harness.realtimeSignals).toEqual([
+      { channel: "threads:changed", payload: { taskId: task.id } },
+      {
+        channel: "tasks:changed",
+        payload: { taskId: task.id, projectId: project.id },
+      },
+      { channel: "comments:changed", payload: { taskId: task.id } },
+    ]);
+    await harness.dispose();
+  });
+
   it("spawns from a preset, attaches the thread, advances status, comments, and invalidates", async () => {
     const { bb, harness } = createFakePluginHost({
-      pluginId: "tasks",
+      pluginId: "tasks-linear",
       sdk: {
         threads: {
           spawn: async () => ({ id: "thr_delegated" }),
@@ -42,7 +139,7 @@ describe("task delegation", () => {
         },
       },
     });
-    const store = createStore(bb);
+    const store = createStore(bb.storage.database());
     const project = store.tasks.createProject({
       name: "Tasks plugin",
       prefix: "TASK",
@@ -81,7 +178,7 @@ describe("task delegation", () => {
             "Run the focused tests before reporting back.",
           ),
           origin: "plugin",
-          originPluginId: "tasks",
+          originPluginId: "tasks-linear",
         }),
       ],
     ]);
@@ -136,7 +233,7 @@ describe("task delegation", () => {
         },
       },
     });
-    const store = createStore(bb);
+    const store = createStore(bb.storage.database());
     const project = store.tasks.createProject({
       name: "Fast delegation",
       prefix: "FAST",
@@ -179,7 +276,7 @@ describe("task delegation", () => {
         },
       },
     });
-    const store = createStore(bb);
+    const store = createStore(bb.storage.database());
     const project = store.tasks.createProject({
       name: "Worktree delegation",
       prefix: "WT",
@@ -238,7 +335,7 @@ describe("task delegation", () => {
         },
       },
     });
-    const store = createStore(bb);
+    const store = createStore(bb.storage.database());
     const project = store.tasks.createProject({
       name: "Default worktree target",
       prefix: "DWT",
@@ -293,7 +390,7 @@ describe("task delegation", () => {
         },
       },
     });
-    const store = createStore(bb);
+    const store = createStore(bb.storage.database());
     const project = store.tasks.createProject({
       name: "Invalid target",
       prefix: "BAD",
@@ -330,7 +427,7 @@ describe("task delegation", () => {
       pluginId: "tasks",
       sdk: { threads: { spawn: async () => ({ id: "thr_never" }) } },
     });
-    const store = createStore(bb);
+    const store = createStore(bb.storage.database());
     const project = store.tasks.createProject({
       name: "Unlinked",
       prefix: "UNL",
@@ -368,7 +465,7 @@ describe("task delegation", () => {
         },
       },
     });
-    const store = createStore(bb);
+    const store = createStore(bb.storage.database());
     const project = store.tasks.createProject({
       name: "Manual",
       prefix: "MAN",

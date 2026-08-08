@@ -2,19 +2,30 @@ import { defineRpcContract, type BbPluginApi } from "@bb/plugin-sdk";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
+  AcpChildSchema,
   AmpLinkSchema,
   AmpStateSchema,
   StatusSchema,
   TargetSchema,
   TranscriptPageSchema,
+  TargetViewSchema,
   hashRemote,
   parseCompanionPort,
   parseConfig,
+  sanitizeThreadUrl,
+  selectLink,
   selectTarget,
+  toAcpChildren,
   truncate,
   type AmpLink,
   type Target,
 } from "./contract";
+import { readLinks, saveLink } from "./links";
+import {
+  claimPendingCreate,
+  completePendingCreate,
+  prunePendingCreates,
+} from "./pending";
 import { requestThroughHost } from "./host-client";
 
 const rpcErrorSchema = z.object({
@@ -24,12 +35,15 @@ const rpcErrorSchema = z.object({
 
 export const rpcContract = defineRpcContract({
   getPanelState: {
-    input: z.object({ threadId: z.string() }).strict(),
+    input: z
+      .object({ threadId: z.string(), ampThreadId: z.string().optional() })
+      .strict(),
     output: z.object({
       configured: z.boolean(),
-      targets: z.array(TargetSchema),
-      selectedTarget: TargetSchema.nullable(),
+      selectedTarget: TargetViewSchema.nullable(),
       link: AmpLinkSchema.nullable(),
+      links: z.array(AmpLinkSchema),
+      acpChildren: z.array(AcpChildSchema),
       canSend: z.boolean(),
       reason: z.string().nullable(),
       managedWorktree: z.boolean(),
@@ -50,37 +64,59 @@ export const rpcContract = defineRpcContract({
         threadId: z.string(),
         targetName: z.string().optional(),
         mode: z.enum(["low", "medium", "high", "ultra"]).default("high"),
+        /** Stable per explicit Send; retries of it reuse one Amp thread. */
+        invocationId: z.string().min(1).max(200).optional(),
       })
       .strict(),
-    output: z.object({ link: AmpLinkSchema }),
+    output: z.object({ link: AmpLinkSchema, links: z.array(AmpLinkSchema) }),
   },
   sendFollowup: {
     input: z
       .object({
         threadId: z.string(),
+        ampThreadId: z.string().optional(),
         message: z.string().min(1).max(12000),
       })
       .strict(),
     output: z.object({ state: AmpStateSchema }),
   },
   refreshStatus: {
-    input: z.object({ threadId: z.string() }).strict(),
+    input: z
+      .object({ threadId: z.string(), ampThreadId: z.string().optional() })
+      .strict(),
     output: z.object({
       link: AmpLinkSchema.nullable(),
       status: StatusSchema.nullable(),
+    }),
+  },
+  getRunSnapshot: {
+    input: z
+      .object({
+        threadId: z.string(),
+        ampThreadId: z.string().optional(),
+        offset: z.number().int().nonnegative().max(10_000).default(0),
+      })
+      .strict(),
+    output: z.object({
+      link: AmpLinkSchema.nullable(),
+      status: StatusSchema.nullable(),
+      page: TranscriptPageSchema.nullable(),
     }),
   },
   getMessages: {
     input: z
       .object({
         threadId: z.string(),
+        ampThreadId: z.string().optional(),
         offset: z.number().int().nonnegative().max(10_000).default(0),
       })
       .strict(),
     output: TranscriptPageSchema,
   },
   cancelAmp: {
-    input: z.object({ threadId: z.string() }).strict(),
+    input: z
+      .object({ threadId: z.string(), ampThreadId: z.string().optional() })
+      .strict(),
     output: z.object({ state: AmpStateSchema }),
   },
 });
@@ -105,20 +141,28 @@ export default async function plugin(bb: BbPluginApi) {
   });
 
   bb.rpc.register(rpcContract, {
-    async getPanelState({ threadId }) {
+    async getPanelState({ threadId, ampThreadId }) {
       const ctx = await resolveContext(bb, settings, threadId);
       const target = selectTarget(
         ctx.targets,
         ctx.environment.hostId,
         ctx.repoPath,
       );
-      const link = await getLink(bb, threadId);
-      const reason = await sendBlockReason(ctx, target, link !== null);
+      const links = await readLinks(bb.storage.kv, threadId);
+      const reason = await sendBlockReason(ctx, target);
       return {
         configured: ctx.targets.length > 0,
-        targets: ctx.targets,
-        selectedTarget: target,
-        link,
+        // Only the display fields: host ids, checkout paths, the companion
+        // client path, and the unhashed remote stay server-side.
+        selectedTarget:
+          target === null
+            ? null
+            : { name: target.name, runnerId: target.runnerId },
+        // A stale selection (link dropped from the bounded list) falls back
+        // to the newest link instead of leaving the panel with nothing.
+        link: selectLink(links, ampThreadId) ?? selectLink(links),
+        links,
+        acpChildren: await listAcpChildren(bb, threadId),
         canSend: reason === null,
         reason,
         managedWorktree:
@@ -127,23 +171,70 @@ export default async function plugin(bb: BbPluginApi) {
         repo: ctx.repo,
       };
     },
-    async sendToAmp({ threadId, targetName, mode }) {
+    /**
+     * One round-trip for the panel's poll: status and the latest transcript
+     * page for the same link, so the header and the transcript cannot
+     * describe different runs.
+     */
+    async getRunSnapshot({ threadId, ampThreadId, offset }) {
+      const links = await readLinks(bb.storage.kv, threadId);
+      const link = selectLink(links, ampThreadId);
+      if (link === null) return { link: null, status: null, page: null };
+      const target = await requireLinkTarget(settings, link);
+      const status = StatusSchema.parse(
+        await companionRequest(
+          bb,
+          settings,
+          target,
+          "GET",
+          `/v1/threads/${encodeURIComponent(link.ampThreadId)}`,
+        ),
+      );
+      const nextLink = {
+        ...link,
+        lastKnownState: status.state,
+        threadUrl: status.threadUrl ?? link.threadUrl,
+      };
+      await saveLink(bb.storage.kv, nextLink);
+      const page = TranscriptPageSchema.parse(
+        await companionRequest(
+          bb,
+          settings,
+          target,
+          "GET",
+          `/v1/threads/${encodeURIComponent(link.ampThreadId)}/messages?offset=${offset}`,
+        ),
+      );
+      return { link: nextLink, status, page };
+    },
+    async sendToAmp({ threadId, targetName, mode, invocationId }) {
       const ctx = await resolveContext(bb, settings, threadId);
       const target =
         targetName === undefined
           ? selectTarget(ctx.targets, ctx.environment.hostId, ctx.repoPath)
           : (ctx.targets.find((candidate) => candidate.name === targetName) ??
             null);
-      const reason = await sendBlockReason(
-        ctx,
-        target,
-        (await getLink(bb, threadId)) !== null,
-      );
+      const reason = await sendBlockReason(ctx, target);
       if (reason !== null || target === null)
         throw new Error(reason ?? "No Amp target selected.");
 
-      const pendingKey = `pending-create:${threadId}`;
-      const requestId = await pendingCreateRequestId(bb, pendingKey);
+      const now = Date.now();
+      await prunePendingCreates(bb.storage.kv, threadId, now);
+      const pending = await claimPendingCreate(
+        bb.storage.kv,
+        threadId,
+        invocationId,
+        randomUUID(),
+        now,
+      );
+      if (pending.completedAmpThreadId !== undefined) {
+        // This invocation already created a thread; a retry after a lost
+        // response must return that run rather than create a second one.
+        const links = await readLinks(bb.storage.kv, threadId);
+        const existing = selectLink(links, pending.completedAmpThreadId);
+        if (existing !== null) return { link: existing, links };
+      }
+
       const packet = await buildHandoffPacket(bb, threadId, ctx, target);
       const response = await companionRequest(
         bb,
@@ -152,7 +243,7 @@ export default async function plugin(bb: BbPluginApi) {
         "POST",
         "/v1/threads",
         {
-          requestId,
+          requestId: pending.requestId,
           runnerId: target.runnerId,
           mode,
           message: packet,
@@ -177,15 +268,23 @@ export default async function plugin(bb: BbPluginApi) {
         targetName: target.name,
         createdAt: new Date().toISOString(),
         lastKnownState: parsed.state,
-        threadUrl: parsed.threadUrl,
+        threadUrl: sanitizeThreadUrl(parsed.threadUrl),
       };
-      await setLink(bb, link);
-      await bb.storage.kv.delete(pendingKey);
+      const links = await saveLink(bb.storage.kv, link);
+      // Kept, not deleted: the record must outlive success for the full
+      // window so a replayed invocation resolves to this same thread.
+      await completePendingCreate(
+        bb.storage.kv,
+        threadId,
+        invocationId,
+        pending,
+        link.ampThreadId,
+      );
       bb.realtime.publish(`amp:${threadId}`, { type: "link-updated" });
-      return { link };
+      return { link, links };
     },
-    async sendFollowup({ threadId, message }) {
-      const link = await requireLink(bb, threadId);
+    async sendFollowup({ threadId, ampThreadId, message }) {
+      const link = await requireLink(bb, threadId, ampThreadId);
       const target = await requireLinkTarget(settings, link);
       const response = await companionRequest(
         bb,
@@ -196,7 +295,7 @@ export default async function plugin(bb: BbPluginApi) {
         { message },
       );
       const parsed = StatusSchema.parse(response);
-      await setLink(bb, {
+      await saveLink(bb.storage.kv, {
         ...link,
         lastKnownState: parsed.state,
         threadUrl: parsed.threadUrl ?? link.threadUrl,
@@ -204,8 +303,11 @@ export default async function plugin(bb: BbPluginApi) {
       bb.realtime.publish(`amp:${threadId}`, { type: "link-updated" });
       return { state: parsed.state };
     },
-    async refreshStatus({ threadId }) {
-      const link = await getLink(bb, threadId);
+    async refreshStatus({ threadId, ampThreadId }) {
+      const link = selectLink(
+        await readLinks(bb.storage.kv, threadId),
+        ampThreadId,
+      );
       if (link === null) return { link: null, status: null };
       const target = await requireLinkTarget(settings, link);
       const status = StatusSchema.parse(
@@ -222,11 +324,11 @@ export default async function plugin(bb: BbPluginApi) {
         lastKnownState: status.state,
         threadUrl: status.threadUrl ?? link.threadUrl,
       };
-      await setLink(bb, nextLink);
+      await saveLink(bb.storage.kv, nextLink);
       return { link: nextLink, status };
     },
-    async cancelAmp({ threadId }) {
-      const link = await requireLink(bb, threadId);
+    async cancelAmp({ threadId, ampThreadId }) {
+      const link = await requireLink(bb, threadId, ampThreadId);
       const target = await requireLinkTarget(settings, link);
       const status = StatusSchema.parse(
         await companionRequest(
@@ -238,12 +340,12 @@ export default async function plugin(bb: BbPluginApi) {
           {},
         ),
       );
-      await setLink(bb, { ...link, lastKnownState: status.state });
+      await saveLink(bb.storage.kv, { ...link, lastKnownState: status.state });
       bb.realtime.publish(`amp:${threadId}`, { type: "link-updated" });
       return { state: status.state };
     },
-    async getMessages({ threadId, offset }) {
-      const link = await requireLink(bb, threadId);
+    async getMessages({ threadId, ampThreadId, offset }) {
+      const link = await requireLink(bb, threadId, ampThreadId);
       const target = await requireLinkTarget(settings, link);
       return TranscriptPageSchema.parse(
         await companionRequest(
@@ -256,22 +358,6 @@ export default async function plugin(bb: BbPluginApi) {
       );
     },
   });
-}
-
-async function pendingCreateRequestId(bb: BbPluginApi, key: string) {
-  const pending = z
-    .object({
-      requestId: z.string().uuid(),
-      createdAt: z.number().int().nonnegative(),
-    })
-    .safeParse(await bb.storage.kv.get(key));
-  const now = Date.now();
-  if (pending.success && now - pending.data.createdAt < 9 * 60 * 1000) {
-    return pending.data.requestId;
-  }
-  const requestId = randomUUID();
-  await bb.storage.kv.set(key, { requestId, createdAt: now });
-  return requestId;
 }
 
 async function resolveContext(
@@ -309,16 +395,18 @@ async function resolveContext(
   };
 }
 
+/**
+ * Existing links never block a send: an explicit Send to Amp may start an
+ * additional companion thread alongside the ones already linked here.
+ */
 async function sendBlockReason(
   ctx: Awaited<ReturnType<typeof resolveContext>>,
   target: Target | null,
-  alreadyLinked: boolean,
 ) {
-  if (alreadyLinked)
-    return "This BB thread is already linked to an Amp thread.";
   if (ctx.targets.length === 0) return "No Amp target mappings are configured.";
   if (target === null)
     return "No single Amp target matches this BB host and canonical repo path.";
+  if (ctx.repo.unavailable !== null) return ctx.repo.unavailable;
   if (
     target.repoRemote !== undefined &&
     ctx.repo.remoteHash !== hashRemote(target.repoRemote)
@@ -372,9 +460,16 @@ async function repoFacts(
 ) {
   const status = await bb.sdk.environments.status({ environmentId });
   if (status.outcome === "unavailable") {
-    throw new Error(
-      `BB could not inspect this checkout: ${status.failure.message}`,
-    );
+    // An offline host must not hide this thread's existing links and ACP
+    // children; it only blocks starting new work.
+    return {
+      path: repoPath,
+      branch: null,
+      head: null,
+      dirty: false,
+      remoteHash: null,
+      unavailable: `BB could not inspect this checkout: ${status.failure.message}`,
+    };
   }
   const workspace = status.outcome === "available" ? status.workspace : null;
   const checkout = workspace?.checkout;
@@ -392,23 +487,46 @@ async function repoFacts(
     head,
     dirty: workspace?.workingTree.hasUncommittedChanges ?? false,
     remoteHash: remote === null ? null : hashRemote(remote),
+    unavailable: null as string | null,
   };
 }
 
-async function getLink(bb: BbPluginApi, threadId: string) {
-  const raw = await bb.storage.kv.get(`link:${threadId}`);
-  const parsed = AmpLinkSchema.safeParse(raw);
-  return parsed.success ? parsed.data : null;
+async function requireLink(
+  bb: BbPluginApi,
+  threadId: string,
+  ampThreadId?: string,
+) {
+  const links = await readLinks(bb.storage.kv, threadId);
+  const link = selectLink(links, ampThreadId);
+  if (link !== null) return link;
+  throw new Error(
+    ampThreadId === undefined
+      ? "This BB thread is not linked to Amp."
+      : "That Amp thread is not linked to this BB thread.",
+  );
 }
 
-async function requireLink(bb: BbPluginApi, threadId: string) {
-  const link = await getLink(bb, threadId);
-  if (link === null) throw new Error("This BB thread is not linked to Amp.");
-  return link;
-}
-
-async function setLink(bb: BbPluginApi, link: AmpLink) {
-  await bb.storage.kv.set(`link:${link.bbThreadId}`, link);
+/**
+ * Direct BB children running the native `acp-amp` provider. BB owns those
+ * threads and their transcripts; the plugin only reports that they exist so
+ * the panel can navigate to them. A listing failure degrades to an empty
+ * list rather than breaking the whole panel.
+ */
+async function listAcpChildren(bb: BbPluginApi, threadId: string) {
+  try {
+    // Fetched well above MAX_ACP_CHILDREN so the newest-first slice is
+    // decided here rather than by BB's list ordering.
+    const children = await bb.sdk.threads.list({
+      parentThreadId: threadId,
+      limit: 200,
+    });
+    return toAcpChildren(children);
+  } catch (error) {
+    bb.log.warn(
+      `Could not list ACP child threads: ${error instanceof Error ? error.message : "unknown error"}`,
+    );
+    return [];
+  }
 }
 
 async function requireLinkTarget(

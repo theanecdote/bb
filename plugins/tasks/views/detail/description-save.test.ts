@@ -1,122 +1,236 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createDescriptionSaver,
   type DescriptionSaveOutcome,
 } from "./description-save.js";
 
-/** Manual timer: `fire()` runs the most recently scheduled callback. */
-function manualTimer() {
-  let queued: (() => void) | undefined;
-  return {
-    schedule(run: () => void) {
-      queued = run;
-      return () => {
-        if (queued === run) queued = undefined;
-      };
-    },
-    fire() {
-      const run = queued;
-      queued = undefined;
-      run?.();
-    },
-  };
-}
+const UNMAPPED_DELAY = 800;
+const MAPPED_DELAY = 10_000;
 
 function setup(
   save: (taskId: string, markdown: string) => Promise<DescriptionSaveOutcome>,
 ) {
-  const timer = manualTimer();
   const errors: string[] = [];
   const saver = createDescriptionSaver({
     save,
     onError: (message) => errors.push(message),
-    delayMs: 800,
-    schedule: timer.schedule,
   });
-  return { timer, errors, saver };
+  return { errors, saver };
 }
 
-const flushMicrotasks = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+const settle = async () => {
+  await Promise.resolve();
+  await Promise.resolve();
+};
 
 describe("createDescriptionSaver", () => {
-  it("clears the pending draft only after the server confirms the save", async () => {
-    const calls: string[] = [];
-    const { timer, errors, saver } = setup(async (_taskId, markdown) => {
-      calls.push(markdown);
-      return { ok: true };
-    });
-
-    saver.onChange("task-1", "draft v1");
-    expect(saver.hasPending()).toBe(true);
-    timer.fire();
-    await flushMicrotasks();
-    expect(calls).toEqual(["draft v1"]);
-    expect(saver.hasPending()).toBe(false);
-    expect(errors).toEqual([]);
-    // Nothing left to flush on unmount.
-    saver.flush("task-1");
-    await flushMicrotasks();
-    expect(calls).toEqual(["draft v1"]);
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-08T00:00:00Z"));
   });
 
-  it("keeps the draft after a transport failure so the unmount flush retries", async () => {
-    const calls: string[] = [];
-    let fail = true;
-    const { timer, errors, saver } = setup(async (_taskId, markdown) => {
-      calls.push(markdown);
-      if (fail) throw new Error("network down");
-      return { ok: true };
-    });
+  afterEach(() => vi.useRealTimers());
 
-    saver.onChange("task-1", "draft v1");
-    timer.fire();
-    await flushMicrotasks();
-    expect(errors).toEqual(["network down"]);
+  it("uses the current mapping policy across unmapped to mapped navigation", async () => {
+    const save = vi.fn(async () => ({ ok: true }));
+    const { saver } = setup(save);
+
+    saver.onChange("local", "local draft", UNMAPPED_DELAY);
+    saver.flush("local"); // task-switch cleanup
+    saver.onChange("linear", "mapped draft", MAPPED_DELAY, MAPPED_DELAY);
+    await settle();
+    expect(save).toHaveBeenCalledWith("local", "local draft");
+
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(save).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(save).toHaveBeenLastCalledWith("linear", "mapped draft");
+  });
+
+  it("flushes the right draft across mapped to mapped navigation", async () => {
+    const save = vi.fn(async () => ({ ok: true }));
+    const { saver } = setup(save);
+
+    saver.onChange("linear-1", "first", MAPPED_DELAY, MAPPED_DELAY);
+    saver.flush("linear-1");
+    saver.onChange("linear-2", "second", MAPPED_DELAY, MAPPED_DELAY);
+    await settle();
+    expect(save).toHaveBeenCalledWith("linear-1", "first");
+    expect(save).not.toHaveBeenCalledWith("linear-2", expect.anything());
+    await vi.advanceTimersByTimeAsync(MAPPED_DELAY);
+    expect(save).toHaveBeenLastCalledWith("linear-2", "second");
+  });
+
+  it("blur and unmount immediately flush fresh drafts", async () => {
+    const save = vi.fn(async () => ({ ok: true }));
+    const { saver } = setup(save);
+    saver.onChange("blurred", "blur draft", MAPPED_DELAY, MAPPED_DELAY);
+    saver.flush("blurred");
+    saver.onChange("unmounted", "unmount draft", UNMAPPED_DELAY);
+    saver.flush("unmounted");
+    await settle();
+    expect(save.mock.calls).toEqual([
+      ["blurred", "blur draft"],
+      ["unmounted", "unmount draft"],
+    ]);
+  });
+
+  it("coalesces ten rapid mapped edits into one write", async () => {
+    const save = vi.fn(async () => ({ ok: true }));
+    const { saver } = setup(save);
+    for (let edit = 1; edit <= 10; edit += 1) {
+      saver.onChange("linear", `draft ${edit}`, MAPPED_DELAY, MAPPED_DELAY);
+      await vi.advanceTimersByTimeAsync(100);
+    }
+    await vi.advanceTimersByTimeAsync(MAPPED_DELAY - 101);
+    expect(save).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(save).toHaveBeenCalledOnce();
+    expect(save).toHaveBeenCalledWith("linear", "draft 10");
+  });
+
+  it("does not retry a failed mapped write on blur before its deadline", async () => {
+    const save = vi
+      .fn<() => Promise<DescriptionSaveOutcome>>()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { message: "Linear rejected it" },
+      })
+      .mockResolvedValue({ ok: true });
+    const { errors, saver } = setup(save);
+    saver.onChange("linear", "draft", MAPPED_DELAY, MAPPED_DELAY);
+    await vi.advanceTimersByTimeAsync(MAPPED_DELAY);
+    expect(errors).toEqual(["Linear rejected it"]);
     expect(saver.hasPending()).toBe(true);
 
-    fail = false;
-    saver.flush("task-1");
-    await flushMicrotasks();
-    expect(calls).toEqual(["draft v1", "draft v1"]);
+    await vi.advanceTimersByTimeAsync(4_000);
+    saver.flush("linear"); // blur
+    saver.flush("linear"); // unmount must not bypass the floor either
+    await settle();
+    expect(save).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(5_999);
+    expect(save).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(save).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries a failed mapped write immediately when flushed at the deadline", async () => {
+    const save = vi
+      .fn<() => Promise<DescriptionSaveOutcome>>()
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue({ ok: true });
+    const { saver } = setup(save);
+    saver.onChange("linear", "draft", MAPPED_DELAY, MAPPED_DELAY);
+    await vi.advanceTimersByTimeAsync(MAPPED_DELAY);
+    await vi.advanceTimersByTimeAsync(MAPPED_DELAY);
+    saver.flush("linear");
+    await settle();
+    expect(save).toHaveBeenCalledTimes(2);
     expect(saver.hasPending()).toBe(false);
   });
 
-  it("does not clear a newer draft typed while a save is in flight", async () => {
-    const calls: string[] = [];
+  it("keeps an unmapped failed draft without an automatic 800ms retry", async () => {
+    const save = vi.fn(async () => {
+      throw new Error("offline");
+    });
+    const { saver } = setup(save);
+    saver.onChange("local", "draft", UNMAPPED_DELAY);
+    await vi.advanceTimersByTimeAsync(UNMAPPED_DELAY);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(save).toHaveBeenCalledOnce();
+    expect(saver.hasPending()).toBe(true);
+  });
+
+  it("re-arms a newer draft whose timer expires while a save is in flight", async () => {
     let release: (() => void) | undefined;
-    const { timer, saver } = setup(async (_taskId, markdown) => {
-      calls.push(markdown);
+    const save = vi.fn(async () => {
       await new Promise<void>((resolve) => {
         release = resolve;
       });
       return { ok: true };
     });
-
-    saver.onChange("task-1", "draft v1");
-    timer.fire();
-    await flushMicrotasks();
-    // While v1 is in flight the user keeps typing.
-    saver.onChange("task-1", "draft v2");
+    const { saver } = setup(save);
+    saver.onChange("task", "v1", UNMAPPED_DELAY);
+    await vi.advanceTimersByTimeAsync(UNMAPPED_DELAY);
+    saver.onChange("task", "v2", UNMAPPED_DELAY);
+    await vi.advanceTimersByTimeAsync(UNMAPPED_DELAY);
+    expect(save).toHaveBeenCalledOnce();
     release?.();
-    await flushMicrotasks();
-    // v1 settled but v2 is still pending; the rearmed timer sends it.
+    await settle();
     expect(saver.hasPending()).toBe(true);
-    timer.fire();
-    release?.();
-    await flushMicrotasks();
-    expect(calls).toEqual(["draft v1", "draft v2"]);
+    await vi.advanceTimersByTimeAsync(UNMAPPED_DELAY - 1);
+    expect(save).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(save).toHaveBeenCalledTimes(2);
   });
 
-  it("only flushes drafts belonging to the flushed task", async () => {
-    const calls: Array<[string, string]> = [];
-    const { saver } = setup(async (taskId, markdown) => {
-      calls.push([taskId, markdown]);
-      return { ok: true };
-    });
-    saver.onChange("task-2", "other task draft");
-    saver.flush("task-1");
-    await flushMicrotasks();
-    expect(calls).toEqual([]);
-    expect(saver.hasPending()).toBe(true);
+  it.each([
+    ["unmapped", UNMAPPED_DELAY, undefined],
+    ["mapped", MAPPED_DELAY, MAPPED_DELAY],
+  ])(
+    "flushes the newest %s draft after a late in-flight save resolves",
+    async (_kind, delayMs, retryFloorMs) => {
+      let releaseFirst: (() => void) | undefined;
+      const save = vi
+        .fn<
+          (taskId: string, markdown: string) => Promise<DescriptionSaveOutcome>
+        >()
+        .mockImplementationOnce(
+          () =>
+            new Promise<DescriptionSaveOutcome>((resolve) => {
+              releaseFirst = () => resolve({ ok: true });
+            }),
+        )
+        .mockResolvedValue({ ok: true });
+      const { saver } = setup(save);
+
+      saver.onChange("task", "v1", delayMs, retryFloorMs);
+      await vi.advanceTimersByTimeAsync(delayMs);
+      saver.onChange("task", "v2", delayMs, retryFloorMs);
+      await vi.advanceTimersByTimeAsync(delayMs); // follow-up fires during v1
+      saver.flush("task"); // unmount before v1 resolves
+
+      expect(save.mock.calls).toEqual([["task", "v1"]]);
+      releaseFirst?.();
+      await settle();
+      expect(save.mock.calls).toEqual([
+        ["task", "v1"],
+        ["task", "v2"],
+      ]);
+      expect(saver.hasPending()).toBe(false);
+    },
+  );
+
+  it("honors a retry floor established while flush waits for an in-flight save", async () => {
+    let rejectFirst: ((error: Error) => void) | undefined;
+    const save = vi
+      .fn<
+        (taskId: string, markdown: string) => Promise<DescriptionSaveOutcome>
+      >()
+      .mockImplementationOnce(
+        () =>
+          new Promise<DescriptionSaveOutcome>((_resolve, reject) => {
+            rejectFirst = reject;
+          }),
+      )
+      .mockResolvedValue({ ok: true });
+    const { saver } = setup(save);
+
+    saver.onChange("task", "v1", MAPPED_DELAY, MAPPED_DELAY);
+    await vi.advanceTimersByTimeAsync(MAPPED_DELAY);
+    saver.onChange("task", "v2", MAPPED_DELAY, MAPPED_DELAY);
+    await vi.advanceTimersByTimeAsync(MAPPED_DELAY);
+    saver.flush("task");
+
+    rejectFirst?.(new Error("rate limited"));
+    await settle();
+    expect(save.mock.calls).toEqual([["task", "v1"]]);
+    await vi.advanceTimersByTimeAsync(MAPPED_DELAY - 1);
+    expect(save).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(save.mock.calls).toEqual([
+      ["task", "v1"],
+      ["task", "v2"],
+    ]);
   });
 });

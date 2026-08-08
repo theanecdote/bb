@@ -36,7 +36,7 @@ function trackedThreadFixture(
       },
     },
   });
-  const store = createStore(host.bb);
+  const store = createStore(host.bb.storage.database());
   const project = store.tasks.createProject({
     name: "Tasks plugin",
     prefix: "TASK",
@@ -166,7 +166,7 @@ describe("task thread lifecycle", () => {
         },
       },
     });
-    const store = createStore(host.bb);
+    const store = createStore(host.bb.storage.database());
     const project = store.tasks.createProject({
       name: "Fast lifecycle",
       prefix: "FAST",
@@ -238,7 +238,7 @@ describe("task thread lifecycle", () => {
         },
       },
     });
-    const store = createStore(host.bb);
+    const store = createStore(host.bb.storage.database());
     const project = store.tasks.createProject({
       name: "Safety net lifecycle",
       prefix: "SAFE",
@@ -289,7 +289,7 @@ describe("task thread lifecycle", () => {
         },
       },
     });
-    const store = createStore(host.bb);
+    const store = createStore(host.bb.storage.database());
     const project = store.tasks.createProject({
       name: "Idle polling",
       prefix: "IDLE",
@@ -335,7 +335,7 @@ describe("task thread lifecycle", () => {
 
   it("ignores lifecycle events for non-tracked threads", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
-    const store = createStore(bb);
+    const store = createStore(bb.storage.database());
     await registerLifecycle(bb, store);
 
     await harness.emitThreadEvent("thread.failed", {

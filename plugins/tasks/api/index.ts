@@ -1,6 +1,7 @@
 import type { BbPluginApi, PluginRpcHandlers } from "@bb/plugin-sdk";
 import {
   createTasksStore,
+  TasksPageCursorError,
   type Attachment as StoredAttachment,
   type Comment as StoredComment,
   type Task as StoredTask,
@@ -13,6 +14,12 @@ import {
 } from "../attachments";
 import { deliverCommentToLatestAgent } from "../steer";
 import { isSideChatShapedThread } from "../shared/side-chat";
+import {
+  LinearAttachmentError,
+  LinearMutationError,
+  type LinearMutationBridge,
+} from "../linear/mutations";
+import type { LinearSyncResult, LinearSyncStatus } from "../linear/sync";
 import {
   tasksRpcContract,
   type Attachment as AttachmentMetadata,
@@ -65,14 +72,25 @@ export interface TasksApiStore {
   projectTaskCount(projectId: string): number;
   projectPrefixExists(prefix: string, excludingProjectId: string): boolean;
   sidebarSummary(): SidebarProjectSummary[];
+  isMappedTask(taskId: string): boolean;
+  linearSources(
+    taskIds: readonly string[],
+  ): Map<string, { identifier: string; url: string }>;
 }
 
-export function createStore(bb: BbPluginApi): TasksApiStore {
-  const database = bb.storage.database();
+export function createStore(
+  database: ReturnType<BbPluginApi["storage"]["database"]>,
+  isMappedTask: (taskId: string) => boolean = () => false,
+  linearSources: (
+    taskIds: readonly string[],
+  ) => Map<string, { identifier: string; url: string }> = () => new Map(),
+): TasksApiStore {
   const tasks = createTasksStore(database);
 
   return {
     tasks,
+    isMappedTask,
+    linearSources,
     transaction<T>(operation: () => T): T {
       return database.transaction(operation)();
     },
@@ -181,7 +199,7 @@ function priorityName(priority: StoredTask["priority"]): string {
   return priority[0]?.toUpperCase() + priority.slice(1);
 }
 
-function publishTasksChanged(
+export function publishTasksChanged(
   bb: BbPluginApi,
   taskId: string,
   projectId: string,
@@ -211,17 +229,23 @@ export function publishCommentsChanged(
 }
 
 function apiTask(store: TasksApiStore, task: StoredTask): Task {
+  const source = store.linearSources([task.id]).get(task.id) ?? null;
   return {
     ...task,
     labelIds: store.taskLabelIds([task.id]).get(task.id) ?? [],
+    linearMapped: source !== null,
+    linearSource: source,
   };
 }
 
 function apiTasks(store: TasksApiStore, tasks: StoredTask[]): Task[] {
   const labelsByTask = store.taskLabelIds(tasks.map((task) => task.id));
+  const sources = store.linearSources(tasks.map((task) => task.id));
   return tasks.map((task) => ({
     ...task,
     labelIds: labelsByTask.get(task.id) ?? [],
+    linearMapped: sources.has(task.id),
+    linearSource: sources.get(task.id) ?? null,
   }));
 }
 
@@ -463,35 +487,82 @@ export async function createComment(
   bb: BbPluginApi,
   store: TasksApiStore,
   input: CreateCommentInput,
-): Promise<StoredComment> {
-  let comment = store.transaction(() =>
-    store.tasks.createComment({
-      taskId: input.taskId,
-      kind: input.kind,
-      authorName: input.authorName,
-      presetName: input.presetName,
-      threadId: input.threadId,
-      body: input.body,
-      notifiedCount: 0,
-    }),
-  );
-
-  if (input.notify) {
-    const delivery = await deliverCommentToLatestAgent(bb, store.tasks, {
-      taskId: comment.taskId,
-      commentId: comment.id,
-      body: comment.body,
-      authorName: comment.authorName,
-    });
-    comment = store.transaction(() =>
-      store.tasks.updateComment(comment.id, {
-        notifiedCount: delivery.notifiedCount,
-      }),
+  mutations?: LinearMutationBridge,
+): Promise<
+  | { ok: true; comment: StoredComment }
+  | {
+      ok: false;
+      error: {
+        code:
+          | "linear_write_failed"
+          | "linear_rate_limited"
+          | "mapped_attachment_forbidden";
+        message: string;
+        retryAt?: string;
+      };
+    }
+> {
+  try {
+    const prepared =
+      mutations && input.kind === "user"
+        ? await mutations.prepareUserComment(input.taskId, input.body, "user")
+        : undefined;
+    let comment = store.transaction(
+      () =>
+        prepared?.commit(store.tasks, {
+          taskId: input.taskId,
+          kind: input.kind,
+          authorName: input.authorName,
+          presetName: input.presetName,
+          threadId: input.threadId,
+          body: input.body,
+          notifiedCount: 0,
+        }) ??
+        store.tasks.createComment({
+          taskId: input.taskId,
+          kind: input.kind,
+          authorName: input.authorName,
+          presetName: input.presetName,
+          threadId: input.threadId,
+          body: input.body,
+          notifiedCount: 0,
+        }),
     );
-  }
 
-  publishCommentsChanged(bb, input.taskId, comment.notifiedCount);
-  return comment;
+    if (input.notify) {
+      const delivery = await deliverCommentToLatestAgent(bb, store.tasks, {
+        taskId: comment.taskId,
+        commentId: comment.id,
+        body: comment.body,
+        authorName: comment.authorName,
+      });
+      comment = store.transaction(() =>
+        store.tasks.updateComment(comment.id, {
+          notifiedCount: delivery.notifiedCount,
+        }),
+      );
+    }
+
+    publishCommentsChanged(bb, input.taskId, comment.notifiedCount);
+    return { ok: true, comment };
+  } catch (error) {
+    if (
+      error instanceof LinearMutationError ||
+      error instanceof LinearAttachmentError
+    ) {
+      return {
+        ok: false,
+        error: {
+          code: error.code,
+          message: error.message,
+          ...(error instanceof LinearMutationError && error.retryAt
+            ? { retryAt: error.retryAt }
+            : {}),
+        },
+      };
+    }
+    throw error;
+  }
 }
 
 interface TaskPullRequestsResult {
@@ -643,8 +714,48 @@ async function listTaskPullRequests(
 export function registerHandlers(
   bb: BbPluginApi,
   store: TasksApiStore,
+  mutations?: LinearMutationBridge,
+  linear?: {
+    status(): Promise<LinearSyncStatus & { configured: boolean }>;
+    sync(): Promise<LinearSyncResult>;
+  },
 ): PluginRpcHandlers<typeof tasksRpcContract> {
   return {
+    linearStatus: async () =>
+      linear
+        ? await linear.status()
+        : {
+            configured: false,
+            syncing: false,
+            viewerName: null,
+            activeIssueCount: 0,
+            lastSuccessfulSyncAt: null,
+            lastAttemptAt: null,
+            lastError: null,
+            retryAt: null,
+          },
+    linearSyncNow: async () =>
+      linear
+        ? await linear.sync()
+        : {
+            ok: false as const,
+            createdProjects: 0,
+            createdTasks: 0,
+            updatedTasks: 0,
+            deactivatedTasks: 0,
+            error: {
+              code: "LINEAR_API_ERROR" as const,
+              message: "Linear is not configured.",
+            },
+          },
+    pluginTransport() {
+      const pluginBaseUrl = `/api/v1/plugins/${encodeURIComponent(bb.pluginId)}`;
+      return {
+        pluginId: bb.pluginId,
+        attachmentBaseUrl: `${pluginBaseUrl}/http/attachments`,
+        tokenUrl: `${pluginBaseUrl}/token`,
+      };
+    },
     createFolder(input) {
       const folder = store.tasks.createFolder(input);
       publishProjectsChanged(bb, null);
@@ -685,6 +796,12 @@ export function registerHandlers(
     },
     renameProjectPrefix(input) {
       try {
+        if (mutations?.isMappedProject(input.projectId)) {
+          fail(
+            "linear_project_readonly",
+            "Linear project prefixes are managed by Linear",
+          );
+        }
         if (store.projectPrefixExists(input.prefix, input.projectId)) {
           fail(
             "project_prefix_conflict",
@@ -729,6 +846,12 @@ export function registerHandlers(
     },
     createTask(input) {
       try {
+        if (mutations?.isMappedProject(input.projectId)) {
+          fail(
+            "linear_project_readonly",
+            "Tasks in this Linear project can only be created by import",
+          );
+        }
         validateTaskParent(store, input.projectId, input.parentTaskId);
         validateTaskLabels(store, input.projectId, input.labelIds);
         const task = store.transaction(() => {
@@ -759,7 +882,7 @@ export function registerHandlers(
       const task = store.tasks.getTaskByKey(input.taskKey);
       return { task: task ? apiTask(store, task) : null };
     },
-    updateTask(input) {
+    async updateTask(input) {
       try {
         const current = store.tasks.getTask(input.taskId);
         if (!current) throw new Error(`Task not found: ${input.taskId}`);
@@ -771,19 +894,27 @@ export function registerHandlers(
         if (input.labelIds) {
           validateTaskLabels(store, current.projectId, input.labelIds);
         }
+        const patch = {
+          title: input.title,
+          description: input.description,
+          status: input.status,
+          priority: input.priority,
+          dueDate: input.dueDate,
+          parentTaskId: input.parentTaskId,
+        };
+        const prepared = await mutations?.prepareTaskMutation(
+          current,
+          patch,
+          "user",
+        );
 
         const result = store.transaction(() => {
           const beforeLabelIds = store.tasks
             .listTaskLabels(current.id)
             .map((link) => link.labelId);
-          const updated = store.tasks.updateTask(current.id, {
-            title: input.title,
-            description: input.description,
-            status: input.status,
-            priority: input.priority,
-            dueDate: input.dueDate,
-            parentTaskId: input.parentTaskId,
-          });
+          const updated =
+            prepared?.commit(store.tasks) ??
+            store.tasks.updateTask(current.id, patch);
           if (input.labelIds) {
             replaceTaskLabels(store, current.id, input.labelIds);
           }
@@ -822,6 +953,20 @@ export function registerHandlers(
         }
         return { ok: true, task: result.task };
       } catch (error) {
+        if (
+          error instanceof LinearMutationError ||
+          error instanceof LinearAttachmentError
+        ) {
+          return taskFailure(
+            new TasksDomainFailure({
+              code: error.code,
+              message: error.message,
+              ...(error instanceof LinearMutationError && error.retryAt
+                ? { retryAt: error.retryAt }
+                : {}),
+            }),
+          );
+        }
         if (error instanceof TasksDomainFailure) return taskFailure(error);
         throw error;
       }
@@ -837,43 +982,75 @@ export function registerHandlers(
       return { deleted };
     },
     listTasks(input) {
-      const page = store.tasks.listTasksPage({
-        projectId: input.projectId,
-        statuses: input.statuses,
-        priorities: input.priorities,
-        labelIds: input.labelIds,
-        activeOnly: input.activeOnly,
-        parentTaskId: input.parentTaskId,
-        search: input.search,
-        sort: input.sort,
-        limit: input.limit,
-        cursor: input.cursor,
-      });
-      return {
-        tasks: apiTasks(store, page.tasks),
-        nextCursor: page.nextCursor,
-      };
-    },
-    boardMove(input) {
-      const current = store.tasks.getTask(input.taskId);
-      if (!current) throw new Error(`Task not found: ${input.taskId}`);
-      const result = store.transaction(() => {
-        const moved = store.tasks.updatePosition(current.id, {
-          status: input.status,
-          beforeTaskId: input.beforeTaskId,
-          afterTaskId: input.afterTaskId,
+      try {
+        const page = store.tasks.listTasksPage({
+          projectId: input.projectId,
+          statuses: input.statuses,
+          priorities: input.priorities,
+          labelIds: input.labelIds,
+          activeOnly: input.activeOnly,
+          parentTaskId: input.parentTaskId,
+          search: input.search,
+          sort: input.sort,
+          limit: input.limit,
+          cursor: input.cursor,
         });
-        const statusChanged = moved.status !== current.status;
-        if (statusChanged) {
-          writeSystemComments(store, current.id, input.authorName, [
-            `Status changed to ${statusName(moved.status)} by ${input.authorName}`,
-          ]);
+        return {
+          ok: true,
+          tasks: apiTasks(store, page.tasks),
+          nextCursor: page.nextCursor,
+        };
+      } catch (error) {
+        if (
+          error instanceof TasksPageCursorError &&
+          error.code === "stale_cursor"
+        ) {
+          return {
+            ok: false,
+            error: { code: error.code, message: error.message },
+          };
         }
-        return { task: apiTask(store, moved), statusChanged };
-      });
-      publishTasksChanged(bb, result.task.id, result.task.projectId);
-      if (result.statusChanged) publishCommentsChanged(bb, result.task.id);
-      return { ok: true, task: result.task };
+        throw error;
+      }
+    },
+    async boardMove(input) {
+      try {
+        const current = store.tasks.getTask(input.taskId);
+        if (!current) throw new Error(`Task not found: ${input.taskId}`);
+        const prepared = await mutations?.prepareTaskMutation(
+          current,
+          { status: input.status },
+          "user",
+        );
+        const result = store.transaction(() => {
+          const moved = store.tasks.updatePosition(current.id, {
+            status: input.status,
+            beforeTaskId: input.beforeTaskId,
+            afterTaskId: input.afterTaskId,
+          });
+          prepared?.commit(store.tasks);
+          const statusChanged = moved.status !== current.status;
+          if (statusChanged) {
+            writeSystemComments(store, current.id, input.authorName, [
+              `Status changed to ${statusName(moved.status)} by ${input.authorName}`,
+            ]);
+          }
+          return { task: apiTask(store, moved), statusChanged };
+        });
+        publishTasksChanged(bb, result.task.id, result.task.projectId);
+        if (result.statusChanged) publishCommentsChanged(bb, result.task.id);
+        return { ok: true, task: result.task };
+      } catch (error) {
+        if (error instanceof LinearMutationError)
+          return taskFailure(
+            new TasksDomainFailure({
+              code: error.code,
+              message: error.message,
+              ...(error.retryAt ? { retryAt: error.retryAt } : {}),
+            }),
+          );
+        throw error;
+      }
     },
     createLabel(input) {
       const label = store.tasks.createLabel(input);
@@ -898,16 +1075,20 @@ export function registerHandlers(
       return { labels: store.tasks.listLabels(input.projectId) };
     },
     async createComment(input) {
-      const comment = await createComment(bb, store, {
-        taskId: input.taskId,
-        kind: "user",
-        authorName: "You",
-        presetName: null,
-        threadId: null,
-        body: input.body,
-        notify: input.notify,
-      });
-      return { comment };
+      return createComment(
+        bb,
+        store,
+        {
+          taskId: input.taskId,
+          kind: "user",
+          authorName: "You",
+          presetName: null,
+          threadId: null,
+          body: input.body,
+          notify: input.notify,
+        },
+        mutations,
+      );
     },
     async listComments(input) {
       const comments = store.tasks.listComments(input.taskId);
@@ -951,6 +1132,7 @@ export function registerHandlers(
           input.attachmentId,
           {
             removeDescriptionReferences: input.removeDescriptionReferences,
+            mutations,
           },
         );
         return attachment
@@ -961,6 +1143,12 @@ export function registerHandlers(
             }
           : { ok: true, deleted: false, attachment: null };
       } catch (error) {
+        if (error instanceof LinearAttachmentError) {
+          return {
+            ok: false,
+            error: { code: error.code, message: error.message },
+          };
+        }
         if (error instanceof AttachmentReferencedError) {
           return {
             ok: false,
@@ -1102,6 +1290,16 @@ export function registerHandlers(
   };
 }
 
-export function registerTasksApi(bb: BbPluginApi, store: TasksApiStore): void {
-  bb.rpc.register(tasksRpcContract, registerHandlers(bb, store));
+export function registerTasksApi(
+  bb: BbPluginApi,
+  store: TasksApiStore,
+  mutations?: LinearMutationBridge,
+  linear?: {
+    status(): Promise<LinearSyncStatus & { configured: boolean }>;
+    sync(): Promise<LinearSyncResult>;
+  },
+): ReturnType<typeof registerHandlers> {
+  const handlers = registerHandlers(bb, store, mutations, linear);
+  bb.rpc.register(tasksRpcContract, handlers);
+  return handlers;
 }

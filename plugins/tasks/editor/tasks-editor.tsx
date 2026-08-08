@@ -1,9 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  Editor,
-  isNodeSelection,
-  type ChainedCommands,
-} from "@tiptap/core";
+import { Editor, isNodeSelection, type ChainedCommands } from "@tiptap/core";
 import { BubbleMenuPlugin } from "@tiptap/extension-bubble-menu";
 import type { IconSvgElement } from "@hugeicons/react";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -218,6 +214,7 @@ export interface TasksEditorProps {
    */
   onSubmit?: () => void;
   onEditorReady?: (editor: Editor) => void;
+  onBlur?: () => void;
   className?: string;
 }
 
@@ -234,6 +231,7 @@ export function TasksEditor({
   onOpenThread,
   onSubmit,
   onEditorReady,
+  onBlur,
   className,
 }: TasksEditorProps) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -272,9 +270,7 @@ export function TasksEditor({
     : undefined;
 
   const [, setRevision] = useState(0);
-  const [mention, setMentionState] = useState<MentionPopoverState | null>(
-    null,
-  );
+  const [mention, setMentionState] = useState<MentionPopoverState | null>(null);
   const mentionRef = useRef<MentionPopoverState | null>(null);
   const setMention = (next: MentionPopoverState | null) => {
     mentionRef.current = next;
@@ -522,9 +518,13 @@ export function TasksEditor({
     .map((item, index) => ({ item, index }))
     .filter((entry) => entry.item.type === "thread");
 
-  const mentionRow = (
-    { item, index }: { item: MentionItem; index: number },
-  ) => (
+  const mentionRow = ({
+    item,
+    index,
+  }: {
+    item: MentionItem;
+    index: number;
+  }) => (
     <button
       key={item.id}
       type="button"
@@ -568,9 +568,20 @@ export function TasksEditor({
     }
   };
 
+  const reportExternalBlur = (event: React.FocusEvent<HTMLDivElement>) => {
+    const next = event.relatedTarget;
+    if (
+      next instanceof Node &&
+      (event.currentTarget.contains(next) || bubbleRef.current?.contains(next))
+    )
+      return;
+    onBlur?.();
+  };
+
   return (
     <div
       ref={wrapperRef}
+      onBlur={reportExternalBlur}
       className={cn("bb-tasks-editor relative min-w-0", className)}
       data-variant={variant}
       onMouseDown={variant === "doc" ? focusOnEmptyMouseDown : undefined}

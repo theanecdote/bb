@@ -78,9 +78,8 @@ import {
  * `harness.inspection`, and `harness.lifecycle`; direct members remain aliases.
  *
  * Deliberately different from the real host:
- * - storage is process-local: kv in a Map, `storage.database()` one shared
- *   better-sqlite3 handle in a temp directory (same data across calls, like
- *   the host's shared file), secret settings alongside plain values (no files).
+ * - storage is process-local: kv in a Map and better-sqlite3 handles over one
+ *   temp file, secret settings alongside plain values (no files).
  * - `bb.sdk` is always bound (no listen gate) and every unstubbed method
  *   throws instead of hitting a server.
  * - http auth modes are recorded but not enforced — signature checks and
@@ -1128,18 +1127,18 @@ function createFakePluginHostInternal(
 
   const storageRoot = persistentState.storageRoot;
 
-  // One shared temp-file handle: every database() call sees the same data,
-  // like the host's handles over one on-disk file.
-  let databaseHandle: Database.Database | undefined;
+  // Match the real host: each call vends a separate WAL connection over the
+  // same plugin-local file. This keeps cross-connection locking observable.
+  const databaseHandles: Database.Database[] = [];
   const storage: PluginStorage = {
     kv,
     database() {
       assertLive();
-      if (!databaseHandle) {
-        databaseHandle = new Database(join(storageRoot, "data.db"));
-        databaseHandle.pragma("busy_timeout = 5000");
-      }
-      return databaseHandle;
+      const database = new Database(join(storageRoot, "data.db"));
+      database.pragma("journal_mode = WAL");
+      database.pragma("busy_timeout = 5000");
+      databaseHandles.push(database);
+      return database;
     },
     migrate(database, statements) {
       assertLive();
@@ -1877,9 +1876,9 @@ function createFakePluginHostInternal(
         emitLog("warn", `dispose hook failed: ${errorMessage(error)}`);
       }
     }
-    if (databaseHandle) {
+    for (const database of databaseHandles) {
       try {
-        databaseHandle.close();
+        database.close();
       } catch (error) {
         emitLog("warn", `database close failed: ${errorMessage(error)}`);
       }

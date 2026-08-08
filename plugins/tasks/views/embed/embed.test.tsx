@@ -57,10 +57,15 @@ function directiveProps(attributes: Record<string, string>) {
 
 function taskDetailRpc(getTaskByKey: () => { task: typeof task }) {
   return {
+    pluginTransport: () => ({
+      pluginId: "tasks",
+      attachmentBaseUrl: "/attachments",
+      tokenUrl: "/token",
+    }),
     getTaskByKey,
     listProjects: () => ({ projects: [] }),
     getTask: () => ({ task: null }),
-    listTasks: () => ({ tasks: [] }),
+    listTasks: () => ({ ok: true, tasks: [] }),
     listLabels: () => ({ labels: [] }),
     listAttachments: () => ({ attachments: [] }),
     listTaskThreads: () => ({ taskThreads: [] }),
