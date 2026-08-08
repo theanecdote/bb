@@ -297,6 +297,7 @@ export function BoardView({ projectId }: BoardViewProps) {
   columnsRef.current = columns;
 
   const [drag, setDrag] = useState<DragState | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
   const [quickAddStatus, setQuickAddStatus] = useState<TaskStatus | null>(null);
   const boardRef = useRef<HTMLDivElement | null>(null);
   const columnRefs = useRef(new Map<TaskStatus, HTMLDivElement>());
@@ -354,6 +355,8 @@ export function BoardView({ projectId }: BoardViewProps) {
       taskId,
       dropIndex,
     );
+    const previous = current;
+    setMutationError(null);
     setColumns(applyBoardMove(current, taskId, toStatus, dropIndex));
     void rpc
       .call("boardMove", {
@@ -365,9 +368,19 @@ export function BoardView({ projectId }: BoardViewProps) {
       })
       .then(
         (result) => {
-          if (!result.ok) board.refresh();
+          if (!result.ok) {
+            setColumns(previous);
+            setMutationError(result.error.message);
+            board.refresh();
+          }
         },
-        () => board.refresh(),
+        (error: unknown) => {
+          setColumns(previous);
+          setMutationError(
+            error instanceof Error ? error.message : "Could not move task",
+          );
+          board.refresh();
+        },
       );
   };
 
@@ -551,39 +564,49 @@ export function BoardView({ projectId }: BoardViewProps) {
   };
 
   return (
-    <div
-      ref={boardRef}
-      className={cn(
-        "flex h-full items-start gap-3 overflow-x-auto p-4",
-        drag !== null && "cursor-grabbing",
-      )}
-    >
-      {visibleBoardStatuses(columns).map(renderColumn)}
-      {drag && ghostTask ? (
+    <div className="relative h-full">
+      {mutationError ? (
         <div
-          className="pointer-events-none fixed z-50"
-          style={{
-            left: drag.x - drag.offsetX,
-            top: drag.y - drag.offsetY,
-            width: drag.width,
-          }}
+          role="alert"
+          className="absolute inset-x-4 top-2 z-20 rounded-md bg-destructive px-3 py-2 text-sm text-destructive-foreground shadow-sm"
         >
-          <TaskCard
-            task={ghostTask}
-            labelsById={labelsById}
-            meta={metaByTaskId.get(ghostTask.id) ?? EMPTY_META}
-            ghost
-          />
+          {mutationError}
         </div>
       ) : null}
-      <NewTaskDialog
-        open={quickAddStatus !== null}
-        onOpenChange={(open) => {
-          if (!open) setQuickAddStatus(null);
-        }}
-        projectId={projectId}
-        defaultStatus={quickAddStatus ?? undefined}
-      />
+      <div
+        ref={boardRef}
+        className={cn(
+          "flex h-full items-start gap-3 overflow-x-auto p-4",
+          drag !== null && "cursor-grabbing",
+        )}
+      >
+        {visibleBoardStatuses(columns).map(renderColumn)}
+        {drag && ghostTask ? (
+          <div
+            className="pointer-events-none fixed z-50"
+            style={{
+              left: drag.x - drag.offsetX,
+              top: drag.y - drag.offsetY,
+              width: drag.width,
+            }}
+          >
+            <TaskCard
+              task={ghostTask}
+              labelsById={labelsById}
+              meta={metaByTaskId.get(ghostTask.id) ?? EMPTY_META}
+              ghost
+            />
+          </div>
+        ) : null}
+        <NewTaskDialog
+          open={quickAddStatus !== null}
+          onOpenChange={(open) => {
+            if (!open) setQuickAddStatus(null);
+          }}
+          projectId={projectId}
+          defaultStatus={quickAddStatus ?? undefined}
+        />
+      </div>
     </div>
   );
 }

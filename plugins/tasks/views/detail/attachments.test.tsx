@@ -4,6 +4,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Attachment } from "../../shared/contract.js";
 import { AttachmentsGrid } from "./attachments.js";
 
+const transport = {
+  pluginId: "tasks",
+  attachmentBaseUrl: "/api/v1/plugins/tasks/attachments",
+  tokenUrl: "/api/v1/plugins/tasks/token",
+};
+
 afterEach(() => {
   cleanup();
 });
@@ -26,6 +32,7 @@ describe("AttachmentsGrid layout", () => {
   it("groups file cards before image previews regardless of input order", () => {
     const screen = render(
       <AttachmentsGrid
+        transport={transport}
         attachments={[
           imageAttachment({ id: "01JIMAGE0000000000000000A1" }),
           imageAttachment({
@@ -55,6 +62,7 @@ describe("AttachmentsGrid removal", () => {
 
     const screen = render(
       <AttachmentsGrid
+        transport={transport}
         attachments={[attachment]}
         onRemove={onRemove}
         onError={onError}
@@ -74,6 +82,7 @@ describe("AttachmentsGrid removal", () => {
 
     const screen = render(
       <AttachmentsGrid
+        transport={transport}
         attachments={[imageAttachment()]}
         onRemove={onRemove}
         onError={onError}
@@ -90,6 +99,7 @@ describe("AttachmentsGrid removal", () => {
   it("uses the composer's always-visible image removal treatment", () => {
     const screen = render(
       <AttachmentsGrid
+        transport={transport}
         attachments={[imageAttachment()]}
         onRemove={vi.fn().mockResolvedValue(undefined)}
       />,
@@ -101,7 +111,10 @@ describe("AttachmentsGrid removal", () => {
 
   it("shows no remove affordance without an onRemove handler", () => {
     const screen = render(
-      <AttachmentsGrid attachments={[imageAttachment()]} />,
+      <AttachmentsGrid
+        transport={transport}
+        attachments={[imageAttachment()]}
+      />,
     );
     expect(screen.queryByLabelText("Remove diagram.png")).toBeNull();
   });

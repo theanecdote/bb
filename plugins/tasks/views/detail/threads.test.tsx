@@ -60,6 +60,11 @@ function taskThreadRow(id: string, threadId: string, title: string) {
 
 function detailRpc(overrides: Record<string, unknown> = {}) {
   return {
+    pluginTransport: () => ({
+      pluginId: "tasks",
+      attachmentBaseUrl: "/attachments",
+      tokenUrl: "/token",
+    }),
     listProjects: () => ({
       projects: [
         {

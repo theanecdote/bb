@@ -409,6 +409,21 @@ function TaskDetail({
             onSave={(title) => void updateTask({ title })}
           />
 
+          {task.linearSource && task.linearSource.url.startsWith("https://") ? (
+            <div className="mb-3 flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Icon name="ExternalLink" className="size-3.5" />
+              <span>{task.linearSource.identifier}</span>
+              <a
+                href={task.linearSource.url}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-sm font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                Open in Linear
+              </a>
+            </div>
+          ) : null}
+
           <InlineProperties
             task={task}
             labels={labels.data}

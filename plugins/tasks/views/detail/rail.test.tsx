@@ -61,6 +61,11 @@ function detailRpc(
   overrides: Record<string, unknown> = {},
 ) {
   return {
+    pluginTransport: () => ({
+      pluginId: "tasks",
+      attachmentBaseUrl: "/attachments",
+      tokenUrl: "/token",
+    }),
     listProjects: () => ({ projects: [projectRow(linkedBbProjectId)] }),
     listFolders: () => ({ folders: [] }),
     listPresets: () => ({ presets: [] }),
