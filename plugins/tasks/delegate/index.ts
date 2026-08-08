@@ -402,6 +402,12 @@ export function handlers(
               : "LINEAR_MAPPING_ERROR",
             "A delegated thread was attached, but its mapped Linear status could not be updated. Reconcile the mapping and retry synchronization.",
           );
+          createSystemComment(store.tasks, {
+            taskId: task.id,
+            presetName: preset.name,
+            threadId: thread.id,
+            body: "The thread was dispatched, but Linear rejected the status change. The task status was not changed.",
+          });
           bb.log.warn(
             `Delegated ${task.key}, but Linear rejected its status transition`,
           );

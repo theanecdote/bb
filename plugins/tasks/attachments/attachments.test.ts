@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { createFakePluginHost } from "@bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
 import { createTasksStore } from "../db";
+import { LinearAttachmentError } from "../linear/mutations";
 import {
   buildAttachmentUrl,
   deleteAttachmentById,
@@ -47,6 +48,54 @@ async function upload(
 }
 
 describe("task attachments", () => {
+  it("returns a safe typed conflict for mapped task and comment uploads before reading or writing", async () => {
+    const mutations = {
+      assertAttachmentAllowed: () => {
+        throw new LinearAttachmentError();
+      },
+    } as Parameters<typeof registerAttachments>[2]["mutations"];
+    const { harness, root, store, task } = setup({ mutations });
+    const comment = store.createComment({
+      taskId: task.id,
+      kind: "user",
+      authorName: "You",
+      body: "owner",
+      notifiedCount: 0,
+    });
+    try {
+      for (const owner of [`taskId=${task.id}`, `commentId=${comment.id}`]) {
+        const response = await harness.fetchHttp(
+          "POST",
+          `/attachments/upload?${owner}&fileName=nope.txt&mime=text%2Fplain`,
+          {
+            body: "secret",
+            headers: {
+              "content-type": "text/plain",
+              // A body read would produce 413, proving mapped ownership is
+              // rejected before request-body validation or persistence.
+              "content-length": String(MAX_ATTACHMENT_SIZE_BYTES + 1),
+            },
+          },
+        );
+        expect(response.status).toBe(409);
+        await expect(response.json()).resolves.toEqual({
+          error: {
+            code: "mapped_attachment_forbidden",
+            message: "Attachments are not supported on tasks imported from Linear",
+          },
+        });
+      }
+      expect(store.listAttachmentsForTask(task.id)).toEqual([]);
+      expect(store.listAttachmentsForComment(comment.id)).toEqual([]);
+      await expect(stat(join(root, "blobs"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      expect(harness.realtimeSignals).toEqual([]);
+    } finally {
+      await harness.dispose();
+    }
+  });
+
   it("uploads a raw body into the plugin blob directory and creates its row", async () => {
     const { harness, root, store, task } = setup();
     try {

@@ -2,7 +2,10 @@ import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import type { BbPluginApi } from "@bb/plugin-sdk";
 import type { Attachment, TasksStore } from "../db";
-import type { LinearMutationBridge } from "../linear/mutations";
+import {
+  LinearAttachmentError,
+  type LinearMutationBridge,
+} from "../linear/mutations";
 
 export const MAX_ATTACHMENT_SIZE_BYTES = 25 * 1024 * 1024;
 
@@ -393,6 +396,12 @@ export async function readAttachmentContent(
 }
 
 function errorResponse(context: PluginHttpContext, error: unknown): Response {
+  if (error instanceof LinearAttachmentError) {
+    return context.json(
+      { error: { code: error.code, message: error.message } },
+      409,
+    );
+  }
   if (error instanceof AttachmentRequestError) {
     return context.json({ error: error.message }, error.status);
   }

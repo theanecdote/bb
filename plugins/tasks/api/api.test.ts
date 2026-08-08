@@ -14,6 +14,103 @@ import { tasksRpcContract } from "../shared/contract";
 import { createComment, createStore, registerTasksApi } from ".";
 
 describe("Tasks RPC domain API", () => {
+  it("refuses mapped project creation and rename and keeps board moves Linear-first", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "tasks-linear" });
+    const store = createStore(bb);
+    const mappings = createLinearMappingStore(bb.storage.database());
+    const project = store.tasks.createProject({
+      name: "Mapped",
+      prefix: "MAP",
+      color: "blue",
+    });
+    const task = store.tasks.createTask({
+      projectId: project.id,
+      title: "Stay put",
+      status: "todo",
+    });
+    const neighbor = store.tasks.createTask({
+      projectId: project.id,
+      title: "Neighbor",
+      status: "todo",
+    });
+    mappings.upsertTeamMapping({
+      linearTeamId: "team",
+      projectId: project.id,
+      teamKey: "MAP",
+      teamName: "Mapped",
+    });
+    mappings.upsertIssueMapping({
+      linearIssueId: "issue",
+      taskId: task.id,
+      linearTeamId: "team",
+      identifier: "MAP-1",
+      url: "https://linear.app/acme/issue/MAP-1",
+      linearStateId: "todo",
+      linearUpdatedAt: "2026-08-08T00:00:00.000Z",
+      active: true,
+    });
+    const client: LinearClient = {
+      viewerAssignedIssues: vi.fn(),
+      issuesByIds: vi.fn(),
+      createComment: vi.fn(),
+      teamStates: vi.fn(async () => {
+        throw new LinearApiError("LINEAR_API_ERROR", "private upstream detail");
+      }),
+      updateIssue: vi.fn(),
+    };
+    registerTasksApi(
+      bb,
+      store,
+      createLinearMutationBridge({ client, mappings }),
+    );
+    const original = store.tasks.getTask(task.id);
+
+    await expect(
+      harness.callRpc("createTask", {
+        projectId: project.id,
+        title: "Must be imported",
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      error: {
+        code: "linear_project_readonly",
+        message: "Tasks in this Linear project can only be created by import",
+      },
+    });
+    await expect(
+      harness.callRpc("renameProjectPrefix", {
+        projectId: project.id,
+        prefix: "NEW",
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      error: {
+        code: "linear_project_readonly",
+        message: "Linear project prefixes are managed by Linear",
+      },
+    });
+    const move = await harness.callRpc("boardMove", {
+      taskId: task.id,
+      status: "in_progress",
+      afterTaskId: neighbor.id,
+      authorName: "Reviewer",
+    });
+    expect(move).toEqual({
+      ok: false,
+      error: {
+        code: "linear_write_failed",
+        message: "Linear rejected the task change. BB was not changed.",
+      },
+    });
+    expect(store.tasks.getTask(task.id)).toEqual(original);
+    expect(store.tasks.listComments(task.id)).toEqual([]);
+    expect(store.tasks.listTasks({ projectId: project.id })).toHaveLength(2);
+    expect(store.tasks.getProject(project.id)?.prefix).toBe("MAP");
+    expect(client.updateIssue).not.toHaveBeenCalled();
+    expect(harness.realtimeSignals).toEqual([]);
+    await harness.dispose();
+  });
+
   it("returns a typed rate limit when mapped status workflow lookup fails", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks-linear" });
     const store = createStore(bb);
@@ -244,6 +341,91 @@ describe("Tasks RPC domain API", () => {
     await expect(
       harness.callRpc("deleteAttachment", { attachmentId }),
     ).resolves.toEqual({ ok: true, deleted: false, attachment: null });
+    await harness.dispose();
+  });
+
+  it("returns a typed mapped attachment delete refusal without mutating blob or description", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "tasks-linear" });
+    const store = createStore(bb);
+    registerAttachments(bb, store.tasks);
+    const project = store.tasks.createProject({
+      name: "Mapped attachments",
+      prefix: "MAT",
+      color: "blue",
+    });
+    const task = store.tasks.createTask({
+      projectId: project.id,
+      title: "Keep attachment",
+    });
+    const uploaded = await harness.fetchHttp(
+      "POST",
+      `/attachments/upload?taskId=${task.id}&fileName=keep.png&mime=image%2Fpng`,
+      { body: "image", headers: { "content-type": "image/png" } },
+    );
+    const { attachmentId } = (await uploaded.json()) as {
+      attachmentId: string;
+    };
+    const attachment = store.tasks.getAttachment(attachmentId);
+    if (!attachment) throw new Error("attachment row was not created");
+    const description = `![keep](${buildAttachmentUrl(attachmentId, "tasks-linear")})`;
+    store.tasks.updateTask(task.id, { description });
+    const mappings = createLinearMappingStore(bb.storage.database());
+    mappings.upsertTeamMapping({
+      linearTeamId: "team",
+      projectId: project.id,
+      teamKey: "MAT",
+      teamName: "Mapped attachments",
+    });
+    mappings.upsertIssueMapping({
+      linearIssueId: "issue",
+      taskId: task.id,
+      linearTeamId: "team",
+      identifier: "MAT-1",
+      url: "https://linear.app/acme/issue/MAT-1",
+      linearStateId: "todo",
+      linearUpdatedAt: "2026-08-08T00:00:00.000Z",
+      active: true,
+    });
+    const client: LinearClient = {
+      viewerAssignedIssues: vi.fn(),
+      issuesByIds: vi.fn(),
+      createComment: vi.fn(),
+      teamStates: vi.fn(),
+      updateIssue: vi.fn(),
+    };
+    registerTasksApi(
+      bb,
+      store,
+      createLinearMutationBridge({ client, mappings }),
+    );
+    const database = bb.storage
+      .database()
+      .prepare<[], { name: string; file: string }>("PRAGMA database_list")
+      .all()
+      .find((entry) => entry.name === "main");
+    if (!database) throw new Error("test database path is missing");
+    const blobDirectory = dirname(
+      join(dirname(database.file), attachment.blobPath),
+    );
+    const signalsBeforeDelete = harness.realtimeSignals.length;
+
+    await expect(
+      harness.callRpc("deleteAttachment", {
+        attachmentId,
+        removeDescriptionReferences: true,
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      error: {
+        code: "mapped_attachment_forbidden",
+        message: "Attachments are not supported on tasks imported from Linear",
+      },
+    });
+    expect(store.tasks.getAttachment(attachmentId)).toEqual(attachment);
+    expect(store.tasks.getTask(task.id)?.description).toBe(description);
+    await expect(stat(blobDirectory)).resolves.toBeDefined();
+    expect(client.updateIssue).not.toHaveBeenCalled();
+    expect(harness.realtimeSignals).toHaveLength(signalsBeforeDelete);
     await harness.dispose();
   });
 

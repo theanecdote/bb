@@ -1119,6 +1119,12 @@ export function registerHandlers(
             }
           : { ok: true, deleted: false, attachment: null };
       } catch (error) {
+        if (error instanceof LinearAttachmentError) {
+          return {
+            ok: false,
+            error: { code: error.code, message: error.message },
+          };
+        }
         if (error instanceof AttachmentReferencedError) {
           return {
             ok: false,

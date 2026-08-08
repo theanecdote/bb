@@ -98,6 +98,15 @@ describe("task delegation", () => {
     expect(store.tasks.listTaskThreads(task.id)).toEqual([
       expect.objectContaining({ threadId: "thr_mapped" }),
     ]);
+    expect(store.tasks.listComments(task.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "system",
+          threadId: "thr_mapped",
+          body: "The thread was dispatched, but Linear rejected the status change. The task status was not changed.",
+        }),
+      ]),
+    );
     expect(mappings.getSyncState()).toMatchObject({
       lastErrorCode: "LINEAR_MAPPING_ERROR",
       lastError:
