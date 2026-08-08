@@ -1460,7 +1460,7 @@ async function runAttachment(
     publishAttachmentChanged(bb, store.tasks, attachment);
     const payload = {
       attachment,
-      url: buildAttachmentUrl(attachment.id),
+      url: buildAttachmentUrl(attachment.id, bb.pluginId),
     };
     return args.flags.has("json")
       ? json(payload)

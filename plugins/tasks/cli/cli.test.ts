@@ -90,9 +90,17 @@ function stdout(result: {
 
 describe("bb tasks CLI", () => {
   it("lists seed-demo in help while retaining the explicit confirmation guard", async () => {
-    const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "tasks-linear",
+    });
     await plugin(bb);
 
+    expect(harness.registrations.cli?.name).toBe("tasks");
+    await expect(harness.callRpc("pluginTransport", null)).resolves.toEqual({
+      pluginId: "tasks-linear",
+      attachmentBaseUrl: "/api/v1/plugins/tasks-linear/http/attachments",
+      tokenUrl: "/api/v1/plugins/tasks-linear/token",
+    });
     expect(stdout(await harness.runCli(["--help"]))).toContain(
       "seed-demo                      Create sample data (requires --yes)",
     );

@@ -645,6 +645,14 @@ export function registerHandlers(
   store: TasksApiStore,
 ): PluginRpcHandlers<typeof tasksRpcContract> {
   return {
+    pluginTransport() {
+      const pluginBaseUrl = `/api/v1/plugins/${encodeURIComponent(bb.pluginId)}`;
+      return {
+        pluginId: bb.pluginId,
+        attachmentBaseUrl: `${pluginBaseUrl}/http/attachments`,
+        tokenUrl: `${pluginBaseUrl}/token`,
+      };
+    },
     createFolder(input) {
       const folder = store.tasks.createFolder(input);
       publishProjectsChanged(bb, null);

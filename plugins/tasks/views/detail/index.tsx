@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { SmilePlusIcon } from "@hugeicons/core-free-icons";
-import type { Task } from "../../shared/contract.js";
+import type { PluginTransport, Task } from "../../shared/contract.js";
 import { useBbNavigate } from "@bb/plugin-sdk/app";
 import {
   listAllTasks,
@@ -190,7 +190,13 @@ function DetailSkeleton() {
   );
 }
 
-function TaskDetail({ task }: { task: Task }) {
+function TaskDetail({
+  task,
+  transport,
+}: {
+  task: Task;
+  transport: PluginTransport;
+}) {
   const rpc = useTasksRpc();
   const navigation = useTasksNavigation();
   const { toasts, push, dismiss } = useDetailToasts();
@@ -315,7 +321,7 @@ function TaskDetail({ task }: { task: Task }) {
   }, [task.id]);
 
   const uploadForTask = async (file: File) => {
-    const result = await uploadAttachment(file, { taskId: task.id });
+    const result = await uploadAttachment(transport, file, { taskId: task.id });
     attachments.refresh();
     return result;
   };
@@ -323,7 +329,7 @@ function TaskDetail({ task }: { task: Task }) {
   const onPickFiles = async (files: FileList | null) => {
     for (const file of files ?? []) {
       try {
-        await uploadAttachment(file, { taskId: task.id });
+        await uploadAttachment(transport, file, { taskId: task.id });
       } catch (error) {
         push("error", error instanceof Error ? error.message : String(error));
       }
@@ -449,6 +455,7 @@ function TaskDetail({ task }: { task: Task }) {
           </div>
 
           <AttachmentsGrid
+            transport={transport}
             attachments={attachments.data ?? []}
             onRemove={async (attachment) => {
               const result = await rpc.call("deleteAttachment", {
@@ -485,7 +492,11 @@ function TaskDetail({ task }: { task: Task }) {
           {/* TaskActivity draws its own top hairline; adding one here would
               stack two dividers above the Activity header. */}
           <div className="mt-1">
-            <TaskActivity taskId={task.id} taskKey={task.key} />
+            <TaskActivity
+              transport={transport}
+              taskId={task.id}
+              taskKey={task.key}
+            />
           </div>
         </div>
 
@@ -506,16 +517,20 @@ function TaskDetail({ task }: { task: Task }) {
 }
 
 export function DetailView({ taskKey }: DetailViewProps) {
+  const transport = useTasksQuery(
+    async (rpc) => rpc.call("pluginTransport", null),
+    [],
+  );
   const query = useTasksQuery(
     async (rpc) => (await rpc.call("getTaskByKey", { taskKey })).task,
     ["tasks:changed"],
     [taskKey],
   );
 
-  if (query.data === undefined) {
-    return query.error ? (
+  if (query.data === undefined || transport.data === undefined) {
+    return query.error || transport.error ? (
       <div className="flex h-full items-center justify-center p-6 text-sm text-destructive">
-        {query.error}
+        {query.error ?? transport.error}
       </div>
     ) : (
       <DetailSkeleton />
@@ -529,5 +544,5 @@ export function DetailView({ taskKey }: DetailViewProps) {
       </div>
     );
   }
-  return <TaskDetail task={query.data} />;
+  return <TaskDetail task={query.data} transport={transport.data} />;
 }

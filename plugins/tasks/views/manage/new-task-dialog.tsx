@@ -92,6 +92,10 @@ export function NewTaskDialog({
   const rpc = useTasksRpc();
   const navigation = useTasksNavigation();
   const projects = useProjects();
+  const transport = useTasksQuery(
+    async (query) => query.call("pluginTransport", null),
+    [],
+  );
   const subtaskMode = defaultParentTaskId !== undefined;
 
   const [selectedProjectId, setSelectedProjectId] = useState(projectId);
@@ -221,7 +225,12 @@ export function NewTaskDialog({
   // re-renders must not upload (and attach) the same file twice.
   const retryingRef = useRef(new Set<number>());
   const retryUpload = async (entry: StagedAttachment) => {
-    if (entry.owner === undefined || retryingRef.current.has(entry.id)) return;
+    if (
+      entry.owner === undefined ||
+      transport.data === undefined ||
+      retryingRef.current.has(entry.id)
+    )
+      return;
     retryingRef.current.add(entry.id);
     setPendingFiles((files) =>
       files.map((candidate) =>
@@ -229,7 +238,7 @@ export function NewTaskDialog({
       ),
     );
     try {
-      await uploadAttachment(entry.file, entry.owner);
+      await uploadAttachment(transport.data, entry.file, entry.owner);
       setPendingFiles((files) =>
         files.filter((candidate) => candidate.id !== entry.id),
       );
@@ -276,10 +285,12 @@ export function NewTaskDialog({
     title.trim().length > 0 &&
     !submitting &&
     !hasOversized &&
+    transport.data !== undefined &&
     createdTask === null;
 
   const submit = async () => {
-    if (!canSubmit || effectiveProjectId === null) return;
+    const pluginTransport = transport.data;
+    if (!canSubmit || effectiveProjectId === null || !pluginTransport) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -303,7 +314,9 @@ export function NewTaskDialog({
       const failed: StagedAttachment[] = [];
       for (const entry of staged) {
         try {
-          await uploadAttachment(entry.file, { taskId: result.task.id });
+          await uploadAttachment(pluginTransport, entry.file, {
+            taskId: result.task.id,
+          });
         } catch (cause) {
           failed.push({
             ...entry,

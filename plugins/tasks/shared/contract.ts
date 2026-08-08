@@ -409,6 +409,16 @@ const updatePresetInputSchema = z
   });
 
 export const tasksRpcContract = defineRpcContract({
+  pluginTransport: {
+    input: z.null(),
+    output: z
+      .object({
+        pluginId: z.string(),
+        attachmentBaseUrl: z.string(),
+        tokenUrl: z.string(),
+      })
+      .strict(),
+  },
   createFolder: {
     input: z
       .object({
@@ -779,6 +789,9 @@ export const tasksRpcContract = defineRpcContract({
 });
 
 export type TasksRpcContract = typeof tasksRpcContract;
+export type PluginTransport = z.infer<
+  (typeof tasksRpcContract)["pluginTransport"]["output"]
+>;
 export type Folder = z.infer<typeof folderSchema>;
 export type Project = z.infer<typeof projectSchema>;
 export type Task = z.infer<typeof taskSchema>;

@@ -33,7 +33,7 @@ function createTestPreset(
 describe("task delegation", () => {
   it("spawns from a preset, attaches the thread, advances status, comments, and invalidates", async () => {
     const { bb, harness } = createFakePluginHost({
-      pluginId: "tasks",
+      pluginId: "tasks-linear",
       sdk: {
         threads: {
           spawn: async () => ({ id: "thr_delegated" }),
@@ -81,7 +81,7 @@ describe("task delegation", () => {
             "Run the focused tests before reporting back.",
           ),
           origin: "plugin",
-          originPluginId: "tasks",
+          originPluginId: "tasks-linear",
         }),
       ],
     ]);

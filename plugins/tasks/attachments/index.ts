@@ -82,8 +82,9 @@ function escapeRegExp(value: string): string {
 export function removeAttachmentDescriptionReferences(
   markdown: string,
   attachmentId: string,
+  pluginId = "tasks",
 ): string {
-  const url = escapeRegExp(buildAttachmentUrl(attachmentId));
+  const url = escapeRegExp(buildAttachmentUrl(attachmentId, pluginId));
   return markdown.replace(new RegExp(`!\\[[^\\]]*\\]\\(${url}\\)`, "g"), "");
 }
 
@@ -351,8 +352,11 @@ async function persistAttachment(
   }
 }
 
-export function buildAttachmentUrl(attachmentId: string): string {
-  return `/api/v1/plugins/tasks/http${DOWNLOAD_PATH}?attachmentId=${encodeURIComponent(attachmentId)}`;
+export function buildAttachmentUrl(
+  attachmentId: string,
+  pluginId = "tasks",
+): string {
+  return `/api/v1/plugins/${encodeURIComponent(pluginId)}/http${DOWNLOAD_PATH}?attachmentId=${encodeURIComponent(attachmentId)}`;
 }
 
 export async function saveAttachmentFromBytes(
@@ -420,13 +424,18 @@ export async function deleteAttachmentById(
       : undefined);
   const ownerTask = taskId ? store.getTask(taskId) : undefined;
   let nextDescription: string | undefined;
-  if (ownerTask?.description.includes(buildAttachmentUrl(attachment.id))) {
+  if (
+    ownerTask?.description.includes(
+      buildAttachmentUrl(attachment.id, bb.pluginId),
+    )
+  ) {
     if (!options.removeDescriptionReferences) {
       throw new AttachmentReferencedError(attachment);
     }
     nextDescription = removeAttachmentDescriptionReferences(
       ownerTask.description,
       attachment.id,
+      bb.pluginId,
     );
     if (nextDescription === ownerTask.description) {
       throw new AttachmentReferencedError(attachment);
@@ -503,7 +512,7 @@ export function registerAttachments(
         return context.json(
           {
             attachmentId: attachment.id,
-            url: buildAttachmentUrl(attachment.id),
+            url: buildAttachmentUrl(attachment.id, bb.pluginId),
           },
           201,
         );

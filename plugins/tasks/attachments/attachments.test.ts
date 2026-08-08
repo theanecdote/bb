@@ -11,7 +11,7 @@ import {
 } from ".";
 
 function setup(options?: Parameters<typeof registerAttachments>[2]) {
-  const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
+  const { bb, harness } = createFakePluginHost({ pluginId: "tasks-linear" });
   const db = bb.storage.database();
   const store = createTasksStore(db);
   const project = store.createProject({
@@ -63,7 +63,9 @@ describe("task attachments", () => {
       };
       const attachment = store.getAttachment(result.attachmentId);
 
-      expect(result.url).toBe(buildAttachmentUrl(result.attachmentId));
+      expect(result.url).toBe(
+        `/api/v1/plugins/tasks-linear/http/attachments/download?attachmentId=${result.attachmentId}`,
+      );
       expect(attachment).toMatchObject({
         taskId: task.id,
         commentId: null,
@@ -282,7 +284,7 @@ describe("task attachments", () => {
       };
       const attachment = store.getAttachment(attachmentId);
       if (!attachment) throw new Error("attachment row was not created");
-      const description = `![diagram](${buildAttachmentUrl(attachmentId)})`;
+      const description = `![diagram](${buildAttachmentUrl(attachmentId, "tasks-linear")})`;
       store.updateTask(task.id, { description });
       const signalsBeforeDelete = harness.realtimeSignals.length;
 
@@ -317,7 +319,7 @@ describe("task attachments", () => {
       const attachment = store.getAttachment(attachmentId);
       if (!attachment) throw new Error("attachment row was not created");
       store.updateTask(task.id, {
-        description: `![diagram](${buildAttachmentUrl(attachmentId)})`,
+        description: `![diagram](${buildAttachmentUrl(attachmentId, "tasks-linear")})`,
       });
       const signalsBeforeDelete = harness.realtimeSignals.length;
 

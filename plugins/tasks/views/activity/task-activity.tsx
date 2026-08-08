@@ -36,6 +36,7 @@ import type {
   Attachment,
   Comment,
   DisplayComment,
+  PluginTransport,
 } from "../../shared/contract.js";
 import {
   formatFileSize,
@@ -110,10 +111,16 @@ function UserAvatar({ name }: { name: string }) {
   );
 }
 
-function FileAttachmentCard({ attachment }: { attachment: Attachment }) {
+function FileAttachmentCard({
+  transport,
+  attachment,
+}: {
+  transport: PluginTransport;
+  attachment: Attachment;
+}) {
   return (
     <a
-      href={attachmentDownloadUrl(attachment.id)}
+      href={attachmentDownloadUrl(transport, attachment.id)}
       download={attachment.fileName}
       title={`${attachment.fileName} · ${formatFileSize(attachment.sizeBytes)}`}
       className="inline-flex min-w-0 max-w-60 items-center gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs shadow-2xs hover:border-input hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
@@ -140,9 +147,11 @@ function FileAttachmentCard({ attachment }: { attachment: Attachment }) {
  * centered caption to stay aligned with the visible image.
  */
 function ImageAttachmentFigure({
+  transport,
   attachment,
   onOpenImage,
 }: {
+  transport: PluginTransport;
   attachment: Attachment;
   onOpenImage: (attachment: Attachment) => void;
 }) {
@@ -156,7 +165,7 @@ function ImageAttachmentFigure({
         onClick={() => onOpenImage(attachment)}
       >
         <img
-          src={attachmentDownloadUrl(attachment.id)}
+          src={attachmentDownloadUrl(transport, attachment.id)}
           alt={attachment.fileName}
           className="h-24 w-auto min-w-15 max-w-full cursor-zoom-in rounded-md border border-border bg-muted object-cover hover:border-input @2xl:h-32 @2xl:min-w-20"
         />
@@ -181,9 +190,11 @@ function ImageAttachmentFigure({
  * reader traversal follow the visual reading order.
  */
 export function AttachmentTracks({
+  transport,
   attachments,
   onOpenImage,
 }: {
+  transport: PluginTransport;
   attachments: Attachment[];
   onOpenImage: (attachment: Attachment) => void;
 }) {
@@ -194,7 +205,11 @@ export function AttachmentTracks({
       {files.length > 0 ? (
         <div className="flex flex-wrap items-start gap-1.5">
           {files.map((attachment) => (
-            <FileAttachmentCard key={attachment.id} attachment={attachment} />
+            <FileAttachmentCard
+              key={attachment.id}
+              transport={transport}
+              attachment={attachment}
+            />
           ))}
         </div>
       ) : null}
@@ -208,6 +223,7 @@ export function AttachmentTracks({
           {images.map((attachment) => (
             <ImageAttachmentFigure
               key={attachment.id}
+              transport={transport}
               attachment={attachment}
               onOpenImage={onOpenImage}
             />
@@ -245,7 +261,15 @@ function SystemEvent({ comment, nowMs }: { comment: Comment; nowMs: number }) {
   );
 }
 
-function CommentCard({ entry, nowMs }: { entry: FeedEntry; nowMs: number }) {
+function CommentCard({
+  transport,
+  entry,
+  nowMs,
+}: {
+  transport: PluginTransport;
+  entry: FeedEntry;
+  nowMs: number;
+}) {
   const { comment, attachments } = entry;
   const agent = comment.kind === "agent";
   const navigate = useBbNavigate();
@@ -277,10 +301,18 @@ function CommentCard({ entry, nowMs }: { entry: FeedEntry; nowMs: number }) {
           onOpenThread={(threadId) => navigate.toThread(threadId)}
         />
         {attachments.length > 0 ? (
-          <AttachmentTracks attachments={attachments} onOpenImage={setLightbox} />
+          <AttachmentTracks
+            transport={transport}
+            attachments={attachments}
+            onOpenImage={setLightbox}
+          />
         ) : null}
         {lightbox ? (
-          <Lightbox attachment={lightbox} onClose={() => setLightbox(null)} />
+          <Lightbox
+            transport={transport}
+            attachment={lightbox}
+            onClose={() => setLightbox(null)}
+          />
         ) : null}
         {comment.kind === "user" && comment.notifiedCount > 0 ? (
           <div className="mt-1 flex items-center gap-1 text-2xs font-medium text-success">
@@ -294,11 +326,16 @@ function CommentCard({ entry, nowMs }: { entry: FeedEntry; nowMs: number }) {
 }
 
 interface ComposerProps {
+  transport: PluginTransport;
   taskId: string;
   notificationTarget: AgentNotificationTarget;
 }
 
-export function CommentComposer({ taskId, notificationTarget }: ComposerProps) {
+export function CommentComposer({
+  transport,
+  taskId,
+  notificationTarget,
+}: ComposerProps) {
   const rpc = useTasksRpc();
   const navigate = useBbNavigate();
   const mentionItems = useMentionItems();
@@ -328,7 +365,7 @@ export function CommentComposer({ taskId, notificationTarget }: ComposerProps) {
       ),
     );
     try {
-      await uploadAttachment(entry.file, entry.owner);
+      await uploadAttachment(transport, entry.file, entry.owner);
       removeFile(entry.id);
       setError(null);
     } catch (cause) {
@@ -366,7 +403,9 @@ export function CommentComposer({ taskId, notificationTarget }: ComposerProps) {
       const failed: StagedAttachment[] = [];
       for (const entry of staged) {
         try {
-          await uploadAttachment(entry.file, { commentId: comment.id });
+          await uploadAttachment(transport, entry.file, {
+            commentId: comment.id,
+          });
         } catch (cause) {
           failed.push({
             ...entry,
@@ -533,13 +572,14 @@ export function AgentNotificationControl({
 }
 
 export interface TaskActivityProps {
+  transport: PluginTransport;
   taskId: string;
   /** Task key like TSK-4; reserved for deep links from feed entries. */
   taskKey: string;
 }
 
 /** Activity feed + comment composer for the task detail page. */
-export function TaskActivity({ taskId }: TaskActivityProps) {
+export function TaskActivity({ transport, taskId }: TaskActivityProps) {
   const feed = useActivityFeed(taskId);
   const nowMs = useNowTick();
   const entries = feed.data ?? [];
@@ -573,11 +613,17 @@ export function TaskActivity({ taskId }: TaskActivityProps) {
               nowMs={nowMs}
             />
           ) : (
-            <CommentCard key={entry.comment.id} entry={entry} nowMs={nowMs} />
+            <CommentCard
+              key={entry.comment.id}
+              transport={transport}
+              entry={entry}
+              nowMs={nowMs}
+            />
           ),
         )}
       </div>
       <CommentComposer
+        transport={transport}
         taskId={taskId}
         notificationTarget={notificationTarget}
       />
