@@ -860,6 +860,9 @@ export function ModelReasoningPicker({
     !isShowingModelError &&
     activeModelOptions.length + activeMoreModelOptions.length >
       MODEL_SEARCH_MIN_OPTIONS;
+  const hasAmpExecutionOptions = activeModelOptions.some(
+    (option) => parseAmpExecutionModel(option.value) !== null,
+  );
 
   return (
     <Popover open={open} onOpenChange={setOpen} modal={modal}>
@@ -966,7 +969,8 @@ export function ModelReasoningPicker({
           >
             {isShowingModelError ? null : (
               <MenuSectionLabel>
-                {activeProviderId === AMP_ACP_PROVIDER_ID
+                {activeProviderId === AMP_ACP_PROVIDER_ID &&
+                hasAmpExecutionOptions
                   ? "Amp Mode"
                   : "Model"}
               </MenuSectionLabel>
@@ -981,7 +985,8 @@ export function ModelReasoningPicker({
                 Loading models…
               </div>
             ) : hasActiveModelOptions &&
-              activeProviderId === AMP_ACP_PROVIDER_ID ? (
+              activeProviderId === AMP_ACP_PROVIDER_ID &&
+              hasAmpExecutionOptions ? (
               <AmpExecutionRows
                 options={activeModelOptions}
                 value={

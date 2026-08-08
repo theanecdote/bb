@@ -45,7 +45,9 @@ function AmpHeaderButton() {
       variant="ghost"
       className="h-7 w-14 p-0.5 [&_svg]:!h-6 [&_svg]:!w-12"
       aria-label="Open Amp panel"
-      onClick={() => navigate.openThreadPanel({ actionId: "amp", title: "Amp" })}
+      onClick={() =>
+        navigate.openThreadPanel({ actionId: "amp", title: "Amp" })
+      }
     >
       <AmpLogo className="h-6 w-12" />
     </Button>
@@ -149,7 +151,9 @@ function AmpPanel({ threadId }: { threadId: string }) {
         errors = 0;
         setNow(Date.now());
         setState((current) =>
-          current === null ? current : applyRefreshedLink(current, snapshot.link),
+          current === null
+            ? current
+            : applyRefreshedLink(current, snapshot.link),
         );
         if (snapshot.page !== null) {
           const page = snapshot.page;
@@ -160,7 +164,8 @@ function AmpPanel({ threadId }: { threadId: string }) {
         errors += 1;
         setError(err instanceof Error ? err.message : String(err));
       } finally {
-        if (!stopped) timer = window.setTimeout(schedule, nextPollDelay(errors));
+        if (!stopped)
+          timer = window.setTimeout(schedule, nextPollDelay(errors));
       }
     };
     const schedule = () => void tick();
@@ -201,7 +206,7 @@ function AmpPanel({ threadId }: { threadId: string }) {
     try {
       const result = await rpc.call("sendToAmp", {
         threadId,
-        mode: "medium",
+        mode: "high",
         invocationId,
       });
       sendInvocation.current = null;
@@ -219,10 +224,17 @@ function AmpPanel({ threadId }: { threadId: string }) {
 
   return (
     <div className="flex flex-col gap-4 text-sm">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="flex-1" />
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Button
+          size="sm"
+          variant={link === null ? "default" : "outline"}
+          disabled={busy || state?.canSend !== true}
+          onClick={send}
+        >
+          {link === null ? "Send to Amp" : "New Amp run"}
+        </Button>
         {link !== null ? (
-          <>
+          <div className="flex min-w-0 items-center gap-1.5">
             <StatusPill
               status={link.lastKnownState ?? "unknown"}
               className="px-1"
@@ -260,26 +272,22 @@ function AmpPanel({ threadId }: { threadId: string }) {
                 href={link.threadUrl}
               />
             ) : null}
-          </>
+          </div>
         ) : null}
-        <Button
-          size="sm"
-          variant={link === null ? "default" : "outline"}
-          disabled={busy || state?.canSend !== true}
-          onClick={send}
-        >
-          {link === null ? "Send to Amp" : "New Amp run"}
-        </Button>
       </div>
 
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
         <dt className="text-muted-foreground">Runner</dt>
         <dd className="min-w-0 truncate">
-          {state?.selectedTarget?.runnerId ?? link?.runnerId ?? "Not configured"}
+          {state?.selectedTarget?.runnerId ??
+            link?.runnerId ??
+            "Not configured"}
         </dd>
         <dt className="text-muted-foreground">Repository</dt>
         <dd className="min-w-0 truncate" title={repoPath}>
-          {repoPath === undefined ? "Unknown" : formatHomePathForDisplay(repoPath)}
+          {repoPath === undefined
+            ? "Unknown"
+            : formatHomePathForDisplay(repoPath)}
         </dd>
         <dt className="text-muted-foreground">Branch</dt>
         <dd className="min-w-0 truncate">{state?.repo?.branch ?? "Unknown"}</dd>
@@ -338,10 +346,9 @@ function AmpPanel({ threadId }: { threadId: string }) {
                 className="h-7 px-2 text-xs font-normal"
                 disabled={busy}
                 onClick={() =>
-                  void run(
-                    () => loadEarlier(link.ampThreadId, nextOffset),
-                    { reload: false },
-                  )
+                  void run(() => loadEarlier(link.ampThreadId, nextOffset), {
+                    reload: false,
+                  })
                 }
               >
                 Load earlier

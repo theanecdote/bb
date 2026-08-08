@@ -32,7 +32,6 @@ import { createRoot } from "react-dom/client";
 const PANEL_STATE = ${JSON.stringify(
   {
     configured: true,
-    targets: [],
     selectedTarget: { name: "Roster Amp", runnerId: "ice-by-snowboard" },
     link: {
       bbThreadId: "thr_1",
@@ -296,12 +295,15 @@ const page = `http://127.0.0.1:${server.address().port}/`;
 console.log(`${page}  (${outDir})`);
 
 if (screenshotPath === null) {
-  console.log("Serving until interrupted; pass --screenshot <path> to capture.");
+  console.log(
+    "Serving until interrupted; pass --screenshot <path> to capture.",
+  );
 } else {
   const chrome = ["google-chrome", "chromium-browser", "chromium"].find(
     (binary) => spawnSync("which", [binary]).status === 0,
   );
-  if (chrome === undefined) throw new Error("No local Chrome to screenshot with.");
+  if (chrome === undefined)
+    throw new Error("No local Chrome to screenshot with.");
   // Async spawn: a synchronous one would block the loop that serves the page.
   const status = await new Promise((resolve) => {
     const child = spawn(

@@ -187,6 +187,43 @@ describe("ModelReasoningPicker", () => {
     expect(onModelChange).toHaveBeenCalledWith("medium:orb");
   });
 
+  it("falls back to the advertised model list for an unpatched Amp adapter", () => {
+    const onModelChange = vi.fn();
+    const { wrapper } = createQueryClientTestHarness();
+    render(
+      <ModelReasoningPicker
+        providerOptions={[{ value: "acp-amp", label: "Amp" }]}
+        selectedProviderId="acp-amp"
+        hasMultipleProviders={false}
+        modelValue="medium"
+        modelOptions={[
+          { value: "low", label: "Low" },
+          { value: "medium", label: "Medium" },
+          { value: "high", label: "High" },
+          { value: "ultra", label: "Ultra" },
+        ]}
+        onModelChange={onModelChange}
+        reasoningValue="medium"
+        reasoningOptions={reasoningOptions}
+        onReasoningChange={vi.fn()}
+        fastModeEnabled={false}
+        onFastModeChange={vi.fn()}
+        showFastModeToggle={false}
+        modal={false}
+      />,
+      { wrapper },
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Provider, model and reasoning" }),
+    );
+    expect(screen.getByText("Model")).not.toBeNull();
+    expect(screen.queryByText("Amp Mode")).toBeNull();
+    expect(screen.queryByText("Executor")).toBeNull();
+    fireEvent.click(screen.getByText("High"));
+    expect(onModelChange).toHaveBeenCalledWith("high");
+  });
+
   it("parses only supported Amp execution model ids", () => {
     expect(parseAmpExecutionModel("ultra:orb")).toEqual({
       mode: "ultra",

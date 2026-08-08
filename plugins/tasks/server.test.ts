@@ -10,7 +10,7 @@ describe("Tasks plugin scaffold", () => {
     await plugin(bb);
 
     // Tasks and Linear share the first connection. Mentions and attachments
-    // each open their own read-only connection at their registration boundary.
+    // each open their own connection at their registration boundary.
     expect(databaseSpy).toHaveBeenCalledTimes(3);
 
     expect(harness.registrations.services.map(({ name }) => name)).toContain(

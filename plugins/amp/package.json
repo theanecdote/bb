@@ -18,7 +18,7 @@
     "name": "Amp",
     "description": "Send explicit BB handoffs to existing named Amp Runners.",
     "branding": {
-      "icon": "./logo.svg",
+      "icon": "./icon.svg",
       "logo": {
         "light": "./logo.svg",
         "dark": "./logo-dark.svg"

@@ -1032,7 +1032,7 @@ Slot props contracts (versioned, additive-only):
 - `threadPanelAction` → an entry in the thread right panel's new-tab
   Actions list (next to "Start side chat" / "Start terminal"), labeled
   `title` with your compact plugin icon. Registration:
-  `{ id, title, icon?, component, layout?, run? }`. Activating it calls
+  `{ id, title, icon?, iconOnly?, component, layout?, run? }`. Activating it calls
   `run({ threadId, openPanel })` — do anything there (rpc, toast), and/or
   call `openPanel({ title?, params? })` to open a closable panel tab
   rendering `component` with `{ threadId: string, params: JsonValue | null }`.
@@ -1041,7 +1041,9 @@ Slot props contracts (versioned, additive-only):
   `@bb/plugin-sdk` and `@bb/plugin-sdk/app`; they persist with the tab across reloads (null when
   none was passed); identical action+params re-opens focus the existing
   tab (title refreshed), different params open sibling tabs. The tab pill
-  shows your compact plugin icon + the tab title. Errors thrown from `run`
+  shows your compact plugin icon + the tab title. Set `iconOnly: true` for a
+  branded action whose compact icon is sufficient in the constrained tab strip;
+  the title remains its accessible name and tooltip. Errors thrown from `run`
   (sync or async) are contained and logged, never breaking the launcher.
   `layout` frames the tab content: `"padded"` (default) wraps `component`
   in the panel's scroll container with standard padding — right for
