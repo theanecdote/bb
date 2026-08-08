@@ -27,6 +27,37 @@ The adapter uses the existing authenticated Amp CLI at:
 
 No Amp API key or companion secret is copied into BB configuration.
 
+### Approved Registry-Binary Exception
+
+BB starts a fresh ACP subprocess when it resumes a later thread turn. The
+unmodified Registry `amp-acp` 0.9.0 binary keeps ACP-session-to-Amp-thread
+state only in process memory and neither advertises nor implements
+`session/load`. The approved exception is a narrowly patched build from
+upstream commit `68f0a16ebd437e51c9bf4d7a2b47c981010dc9a1`; its reproducible
+source/test patch is
+`integrations/amp-acp/patches/0001-bb-session-load.patch`. The original
+Registry binary is retained as
+`/home/exedev/.local/bin/amp-acp.registry-0.9.0`.
+
+The patched adapter advertises `agentCapabilities.loadSession: true`. When the
+first Amp stream yields a validated `T-...` thread ID, it atomically persists
+only this minimal mapping:
+
+```ts
+type PersistedSession = {
+  version: 1;
+  sessionId: string;
+  threadId: string;
+};
+```
+
+On Linux the mapping is stored below
+`${XDG_STATE_HOME:-$HOME/.local/state}/amp-acp/sessions`, with directory mode
+`0700` and file mode `0600`. A later BB-created ACP process loads the exact
+validated session, uses the load request's current cwd and MCP server list,
+and continues the saved Amp thread. No prompts, responses, transcripts, MCP
+configuration, credentials, or modes are persisted.
+
 ## Architecture
 
 The existing explicit handoff path remains unchanged:
@@ -50,8 +81,9 @@ BB thread
 ```
 
 The ACP adapter starts a transient Amp CLI subprocess for a prompt and keeps
-the Amp thread ID for continuation. It does not start, stop, rename, or target
-the existing `amp --no-tui` Runner.
+the Amp thread ID for continuation. The durable minimal mapping is required
+for continuation across BB's process-per-turn lifecycle. It does not start,
+stop, rename, or target the existing `amp --no-tui` Runner.
 
 ## BB Configuration
 

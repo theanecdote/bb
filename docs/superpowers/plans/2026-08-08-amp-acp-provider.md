@@ -250,6 +250,34 @@ test "$(bb thread output "$SMOKE_THREAD_ID" | tr -d '\r' | sed -e 's/[[:space:]]
 
 Expected: the same BB thread returns `AMP ACP CONTINUED`; amp-acp continues the same Amp session rather than creating a replacement BB thread.
 
+### Task 3 Fix Round 1: Durable `session/load` for BB Lifecycle
+
+**Approved exception:** Replace the runtime Registry binary with a narrowly
+patched build from upstream `https://github.com/tao12345666333/amp-acp` at
+commit `68f0a16ebd437e51c9bf4d7a2b47c981010dc9a1`. Keep the verified Registry
+0.9.0 executable at `/home/exedev/.local/bin/amp-acp.registry-0.9.0`; install
+the patched executable at `/home/exedev/.local/bin/amp-acp`. The reproducible
+source/test-only patch is
+`integrations/amp-acp/patches/0001-bb-session-load.patch`.
+
+**Reason:** BB launches a new ACP subprocess for a later turn and calls
+`session/load` only when the agent advertises `loadSession`. Registry 0.9.0
+had an in-memory `sessionId -> threadId` map only, so it started a replacement
+Amp session after the subprocess boundary.
+
+**Implementation contract:** Advertise and implement stable ACP `session/load`.
+Persist only the versioned `{ sessionId, threadId }` mapping after the first
+validated Amp `T-...` ID is observed. On Linux, store it atomically under
+`${XDG_STATE_HOME:-$HOME/.local/state}/amp-acp/sessions` with directory mode
+`0700` and file mode `0600`. Reject unsafe, missing, malformed, and mismatched
+records. On load, use the request's current cwd and MCP server list; the next
+prompt must pass the saved exact thread ID to `amp threads continue`.
+
+**Verification:** Use TDD RED/GREEN source tests, all source unit tests,
+TypeScript lint, compiled binary tests, patched-binary initialization, and one
+BB smoke retry. Do not run a separate real-Amp source E2E. Preserve Runner
+`ice-by-snowboard`, port `43931`, and the companion throughout.
+
 ### Task 4: Publish the approved design and plan to the personal fork
 
 **Files:**
