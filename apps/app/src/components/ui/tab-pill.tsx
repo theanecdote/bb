@@ -32,6 +32,7 @@ export interface TabPillProps {
   ariaKeyshortcuts?: string;
   iconOnly?: boolean;
   leadingVisual?: ReactNode;
+  leadingVisualClassName?: string;
   secondaryLabel?: string | null;
   /** Extra classes for the label text (e.g. `line-through` for a done tab). */
   labelClassName?: string;
@@ -53,6 +54,7 @@ export function TabPill({
   ariaKeyshortcuts,
   iconOnly = false,
   leadingVisual,
+  leadingVisualClassName,
   secondaryLabel = null,
   labelClassName,
   title,
@@ -89,6 +91,7 @@ export function TabPill({
           <span
             className={cn(
               TAB_PILL_LEADING_VISUAL_CLASS,
+              leadingVisualClassName,
               !iconOnly && "mr-1.5",
               closeAction
                 ? "group-hover/tab-pill:opacity-0 group-has-[[data-tab-pill-close]:focus-visible]/tab-pill:opacity-0 max-md:pointer-coarse:opacity-0"

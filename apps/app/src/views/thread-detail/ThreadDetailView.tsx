@@ -1444,21 +1444,26 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
               onClose: () => closeTab(tab.id),
             };
           case "plugin-panel": {
-            const actionIcon =
-              pluginThreadPanelActions.find(
-                (action) =>
-                  action.pluginId === tab.pluginId &&
-                  action.id === tab.actionId,
-              )?.icon ?? null;
+            const action = pluginThreadPanelActions.find(
+              (candidate) =>
+                candidate.pluginId === tab.pluginId &&
+                candidate.id === tab.actionId,
+            );
+            const iconOnly = action?.iconOnly === true;
             return {
               id: tab.id,
               filename: tab.title,
               isActive: tab.id === activeFixedSecondaryTabId,
+              iconOnly,
               leadingVisual: (
                 <PluginIcon
                   pluginId={tab.pluginId}
-                  icon={actionIcon}
-                  className={COARSE_POINTER_COMPACT_ICON_SIZE_CLASS}
+                  icon={action?.icon ?? null}
+                  className={
+                    iconOnly
+                      ? "!h-4 !w-8 max-md:pointer-coarse:!h-5 max-md:pointer-coarse:!w-10"
+                      : COARSE_POINTER_COMPACT_ICON_SIZE_CLASS
+                  }
                 />
               ),
               statusLabel: null,

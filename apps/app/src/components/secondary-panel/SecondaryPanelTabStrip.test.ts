@@ -19,6 +19,52 @@ describe("secondary panel tab-strip edge fades", () => {
     expect(SECONDARY_PANEL_TAB_STRIP_FADE_TONE).toBe("sidebar");
   });
 
+  it("keeps an icon-only plugin tab accessible and gives its wordmark room", () => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const { container, getByRole } = render(
+      createElement(SecondaryPanelTabStrip, {
+        fileTabs: [
+          {
+            id: "amp",
+            filename: "Amp",
+            isActive: true,
+            iconOnly: true,
+            leadingVisual: createElement("svg", { "data-testid": "amp-logo" }),
+            statusLabel: null,
+            onSelect: vi.fn(),
+            onClose: vi.fn(),
+          },
+          {
+            id: "terminal",
+            filename: "Terminal",
+            isActive: false,
+            leadingVisual: null,
+            statusLabel: "exited 1",
+            onSelect: vi.fn(),
+            onClose: vi.fn(),
+          },
+        ],
+        onReorderTab: vi.fn(),
+        usesDesktopChrome: false,
+      }),
+    );
+
+    expect(getByRole("button", { name: "Amp" })).toBeTruthy();
+    expect(
+      getByRole("button", { name: /Terminal.*exited 1/ }),
+    ).toBeTruthy();
+    expect(container.querySelector(".sr-only")?.textContent).toBe("Amp");
+    expect(
+      container.querySelector('[data-testid="amp-logo"]')?.parentElement?.classList,
+    ).toContain("!w-8");
+  });
+
   it("observes the intrinsic tab row so async title changes refresh overflow", () => {
     const observed: Element[] = [];
     let resizeCallback: ResizeObserverCallback | undefined;

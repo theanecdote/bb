@@ -576,7 +576,12 @@ function FileTab({
   return (
     <TabPill
       label={tab.filename}
+      ariaLabel={tab.iconOnly ? tab.filename : undefined}
+      iconOnly={tab.iconOnly}
       leadingVisual={tab.leadingVisual}
+      leadingVisualClassName={
+        tab.iconOnly ? "!w-8 max-md:pointer-coarse:!w-10" : undefined
+      }
       secondaryLabel={tab.statusLabel === null ? null : `(${tab.statusLabel})`}
       title={title}
       isActive={tab.isActive}

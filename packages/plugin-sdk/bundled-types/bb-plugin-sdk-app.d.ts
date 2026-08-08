@@ -83,9 +83,9 @@ declare const serviceTierSchema: z.ZodEnum<{
 }>;
 type ServiceTier = z.infer<typeof serviceTierSchema>;
 declare const permissionModeSchema: z.ZodEnum<{
-    full: "full";
     auto: "auto";
     "accept-edits": "accept-edits";
+    full: "full";
 }>;
 type PermissionMode = z.infer<typeof permissionModeSchema>;
 declare const promptInputSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
@@ -452,6 +452,8 @@ interface PluginThreadPanelActionRegistration {
      * launcher row and opened tabs prefer the plugin's logo.
      */
     icon?: string;
+    /** Render the opened tab as its plugin logo only; the title remains accessible. */
+    iconOnly?: boolean;
     /** Rendered inside every panel tab this action opens. */
     component: ComponentType<PluginThreadPanelProps>;
     /**

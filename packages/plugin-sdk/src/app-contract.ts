@@ -253,6 +253,8 @@ export interface PluginThreadPanelActionRegistration {
    * launcher row and opened tabs prefer the plugin's logo.
    */
   icon?: string;
+  /** Render the opened tab as its plugin logo only; the title remains accessible. */
+  iconOnly?: boolean;
   /** Rendered inside every panel tab this action opens. */
   component: ComponentType<PluginThreadPanelProps>;
   /**

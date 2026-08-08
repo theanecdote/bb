@@ -18,6 +18,7 @@ export interface SecondaryPanelFileTab {
   isActive: boolean;
   isHidden?: boolean;
   isPinned?: boolean;
+  iconOnly?: boolean;
   leadingVisual: ReactNode;
   statusLabel: string | null;
   onSelect: () => void;
