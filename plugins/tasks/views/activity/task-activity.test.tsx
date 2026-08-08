@@ -278,7 +278,7 @@ async function renderComposerWithTask(options?: {
       },
     },
   });
-  const store = createStore(bb, bb.storage.database());
+  const store = createStore(bb.storage.database());
   const project = store.tasks.createProject({
     name: "Composer",
     prefix: "CMP",

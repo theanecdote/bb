@@ -6,7 +6,7 @@ import { registerMentions } from ".";
 
 function setup() {
   const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
-  const store = createStore(bb, bb.storage.database());
+  const store = createStore(bb.storage.database());
   registerMentions(bb, store);
   const provider = harness.registrations.mentionProviders[0];
   if (!provider) throw new Error("task mention provider was not registered");

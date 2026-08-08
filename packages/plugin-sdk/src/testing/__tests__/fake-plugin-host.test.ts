@@ -121,7 +121,7 @@ describe("storage", () => {
     ).rejects.toThrow(/limit is 262144 \(256KB\)/);
   });
 
-  it("database() returns one shared database and migrate() is append-only by index", () => {
+  it("database() returns separate WAL handles over one append-only database", () => {
     const { bb } = createFakePluginHost();
     const db = bb.storage.database();
     bb.storage.migrate(db, [
@@ -131,7 +131,8 @@ describe("storage", () => {
 
     // A later load appends a statement; the first must not re-run.
     const again = bb.storage.database();
-    expect(again).toBe(db);
+    expect(again).not.toBe(db);
+    expect(again.pragma("journal_mode", { simple: true })).toBe("wal");
     bb.storage.migrate(again, [
       "CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)",
       "ALTER TABLE notes ADD COLUMN starred INTEGER NOT NULL DEFAULT 0",

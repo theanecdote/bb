@@ -16,8 +16,9 @@ import { createComment, createStore, registerTasksApi } from ".";
 describe("Tasks RPC domain API", () => {
   it("refuses mapped project creation and rename and keeps board moves Linear-first", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks-linear" });
-    const store = createStore(bb, bb.storage.database());
-    const mappings = createLinearMappingStore(bb.storage.database());
+    const database = bb.storage.database();
+    const store = createStore(database);
+    const mappings = createLinearMappingStore(database);
     const project = store.tasks.createProject({
       name: "Mapped",
       prefix: "MAP",
@@ -113,8 +114,9 @@ describe("Tasks RPC domain API", () => {
 
   it("returns a typed rate limit when mapped status workflow lookup fails", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks-linear" });
-    const store = createStore(bb, bb.storage.database());
-    const mappings = createLinearMappingStore(bb.storage.database());
+    const database = bb.storage.database();
+    const store = createStore(database);
+    const mappings = createLinearMappingStore(database);
     const project = store.tasks.createProject({
       name: "Mapped",
       prefix: "MAP",
@@ -181,8 +183,9 @@ describe("Tasks RPC domain API", () => {
 
   it("returns safe typed Linear comment failures over the real RPC contract", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks-linear" });
-    const store = createStore(bb, bb.storage.database());
-    const mappings = createLinearMappingStore(bb.storage.database());
+    const database = bb.storage.database();
+    const store = createStore(database);
+    const mappings = createLinearMappingStore(database);
     const project = store.tasks.createProject({
       name: "Mapped",
       prefix: "MAP",
@@ -248,7 +251,7 @@ describe("Tasks RPC domain API", () => {
 
   it("returns a typed stale-cursor result after the task-list revision changes", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
-    const store = createStore(bb, bb.storage.database());
+    const store = createStore(bb.storage.database());
     registerTasksApi(bb, store);
     const project = store.tasks.createProject({
       name: "Pagination",
@@ -281,7 +284,7 @@ describe("Tasks RPC domain API", () => {
 
   it("deletes through the typed RPC policy and rejects saved-description references", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
-    const store = createStore(bb, bb.storage.database());
+    const store = createStore(bb.storage.database());
     registerAttachments(bb, store.tasks);
     registerTasksApi(bb, store);
     const project = store.tasks.createProject({
@@ -346,7 +349,8 @@ describe("Tasks RPC domain API", () => {
 
   it("returns a typed mapped attachment delete refusal without mutating blob or description", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks-linear" });
-    const store = createStore(bb, bb.storage.database());
+    const database = bb.storage.database();
+    const store = createStore(database);
     registerAttachments(bb, store.tasks);
     const project = store.tasks.createProject({
       name: "Mapped attachments",
@@ -369,7 +373,7 @@ describe("Tasks RPC domain API", () => {
     if (!attachment) throw new Error("attachment row was not created");
     const description = `![keep](${buildAttachmentUrl(attachmentId, "tasks-linear")})`;
     store.tasks.updateTask(task.id, { description });
-    const mappings = createLinearMappingStore(bb.storage.database());
+    const mappings = createLinearMappingStore(database);
     mappings.upsertTeamMapping({
       linearTeamId: "team",
       projectId: project.id,
@@ -398,14 +402,13 @@ describe("Tasks RPC domain API", () => {
       store,
       createLinearMutationBridge({ client, mappings }),
     );
-    const database = bb.storage
-      .database()
+    const databaseEntry = database
       .prepare<[], { name: string; file: string }>("PRAGMA database_list")
       .all()
       .find((entry) => entry.name === "main");
-    if (!database) throw new Error("test database path is missing");
+    if (!databaseEntry) throw new Error("test database path is missing");
     const blobDirectory = dirname(
-      join(dirname(database.file), attachment.blobPath),
+      join(dirname(databaseEntry.file), attachment.blobPath),
     );
     const signalsBeforeDelete = harness.realtimeSignals.length;
 
@@ -440,7 +443,7 @@ describe("Tasks RPC domain API", () => {
         },
       },
     });
-    const store = createStore(bb, bb.storage.database());
+    const store = createStore(bb.storage.database());
     registerTasksApi(bb, store);
     const project = store.tasks.createProject({
       name: "Notifications",
@@ -547,7 +550,7 @@ describe("Tasks RPC domain API", () => {
         },
       },
     });
-    const store = createStore(bb, bb.storage.database());
+    const store = createStore(bb.storage.database());
     registerTasksApi(bb, store);
     const project = store.tasks.createProject({
       name: "Notifications",
@@ -696,7 +699,7 @@ describe("Tasks RPC domain API", () => {
         },
       },
     });
-    const store = createStore(bb, bb.storage.database());
+    const store = createStore(bb.storage.database());
     registerTasksApi(bb, store);
     const project = store.tasks.createProject({
       name: "Providers",
@@ -786,7 +789,7 @@ describe("Tasks RPC domain API", () => {
         },
       },
     });
-    registerTasksApi(bb, createStore(bb, bb.storage.database()));
+    registerTasksApi(bb, createStore(bb.storage.database()));
 
     const result = tasksRpcContract.listBbProjects.output.parse(
       await harness.callRpc("listBbProjects", null),
@@ -847,7 +850,7 @@ describe("Tasks RPC domain API", () => {
         },
       },
     });
-    registerTasksApi(bb, createStore(bb, bb.storage.database()));
+    registerTasksApi(bb, createStore(bb.storage.database()));
 
     await expect(harness.callRpc("listProviders", {})).resolves.toEqual({
       providers: [
@@ -899,7 +902,7 @@ describe("Tasks RPC domain API", () => {
         },
       },
     });
-    registerTasksApi(bb, createStore(bb, bb.storage.database()));
+    registerTasksApi(bb, createStore(bb.storage.database()));
 
     await expect(harness.callRpc("listMachines", {})).resolves.toEqual({
       machines: [
@@ -930,7 +933,7 @@ describe("Tasks RPC domain API", () => {
         },
       },
     });
-    registerTasksApi(bb, createStore(bb, bb.storage.database()));
+    registerTasksApi(bb, createStore(bb.storage.database()));
 
     await expect(
       harness.callRpc("listProviderModels", { providerId: "test" }),
@@ -984,7 +987,7 @@ describe("Tasks RPC domain API", () => {
         },
       },
     });
-    registerTasksApi(bb, createStore(bb, bb.storage.database()));
+    registerTasksApi(bb, createStore(bb.storage.database()));
 
     await expect(
       harness.callRpc("searchThreads", { query: "match", limit: 2 }),
@@ -1014,7 +1017,7 @@ describe("Tasks RPC domain API", () => {
       pluginId: "tasks",
       sdk: { threads: { send: async () => undefined } },
     });
-    const store = createStore(bb, bb.storage.database());
+    const store = createStore(bb.storage.database());
     registerTasksApi(bb, store);
     const project = store.tasks.createProject({
       name: "Quiet comments",
@@ -1071,7 +1074,7 @@ describe("Tasks RPC domain API", () => {
 
   it("allows an empty comment body only with attachment intent", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
-    const store = createStore(bb, bb.storage.database());
+    const store = createStore(bb.storage.database());
     registerTasksApi(bb, store);
     const project = store.tasks.createProject({
       name: "Attachment comments",
@@ -1125,7 +1128,7 @@ describe("Tasks RPC domain API", () => {
         },
       },
     });
-    const store = createStore(bb, bb.storage.database());
+    const store = createStore(bb.storage.database());
     registerTasksApi(bb, store);
     const project = store.tasks.createProject({
       name: "Partial delivery",
@@ -1187,7 +1190,7 @@ describe("Tasks RPC domain API", () => {
 
   it("removes task and comment attachment blobs when deleting a task", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
-    const store = createStore(bb, bb.storage.database());
+    const store = createStore(bb.storage.database());
     registerTasksApi(bb, store);
     registerAttachments(bb, store.tasks);
     const project = store.tasks.createProject({
@@ -1254,7 +1257,7 @@ describe("Tasks RPC domain API", () => {
 
   it("removes attachment blobs when force-deleting a project", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
-    const store = createStore(bb, bb.storage.database());
+    const store = createStore(bb.storage.database());
     registerTasksApi(bb, store);
     registerAttachments(bb, store.tasks);
     const project = store.tasks.createProject({
@@ -1303,7 +1306,7 @@ describe("Tasks RPC domain API", () => {
 
   it("runs the project and task flow with comments, filtering, summary SQL, and invalidations", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
-    const store = createStore(bb, bb.storage.database());
+    const store = createStore(bb.storage.database());
     registerTasksApi(bb, store);
 
     const projectResult = tasksRpcContract.createProject.output.parse(
@@ -1466,7 +1469,7 @@ describe("Tasks RPC domain API", () => {
 
   it("resolves task keys case-insensitively and degrades bad keys to null", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
-    const store = createStore(bb, bb.storage.database());
+    const store = createStore(bb.storage.database());
     registerTasksApi(bb, store);
     const project = store.tasks.createProject({
       name: "Plugin",
@@ -1512,7 +1515,7 @@ describe("Tasks RPC domain API", () => {
 
   it("returns a typed error when a task would exceed one sub-task level", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
-    registerTasksApi(bb, createStore(bb, bb.storage.database()));
+    registerTasksApi(bb, createStore(bb.storage.database()));
 
     const projectResult = tasksRpcContract.createProject.output.parse(
       await harness.callRpc("createProject", {
@@ -1556,7 +1559,7 @@ describe("Tasks RPC domain API", () => {
 
   it("allows legacy built-in rows to be renamed and deleted", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
-    const store = createStore(bb, bb.storage.database());
+    const store = createStore(bb.storage.database());
     registerTasksApi(bb, store);
     const preset = store.tasks.createPreset({
       name: "Sonnet · high",
@@ -1641,7 +1644,7 @@ describe("Tasks RPC domain API", () => {
         },
       },
     });
-    const store = createStore(bb, bb.storage.database());
+    const store = createStore(bb.storage.database());
     registerTasksApi(bb, store);
     const project = store.tasks.createProject({
       name: "PRs",
@@ -1741,7 +1744,7 @@ describe("Tasks RPC domain API", () => {
         },
       },
     });
-    const store = createStore(bb, bb.storage.database());
+    const store = createStore(bb.storage.database());
     registerTasksApi(bb, store);
     const project = store.tasks.createProject({
       name: "PRs",
@@ -1802,7 +1805,7 @@ describe("Tasks RPC domain API", () => {
         },
       },
     });
-    const store = createStore(bb, bb.storage.database());
+    const store = createStore(bb.storage.database());
     registerTasksApi(bb, store);
     const project = store.tasks.createProject({
       name: "PRs",
@@ -1902,7 +1905,7 @@ describe("Tasks RPC domain API", () => {
         },
       },
     });
-    const store = createStore(bb, bb.storage.database());
+    const store = createStore(bb.storage.database());
     registerTasksApi(bb, store);
     const project = store.tasks.createProject({
       name: "PRs",

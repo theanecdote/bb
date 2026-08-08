@@ -208,7 +208,7 @@ describe("bb tasks CLI", () => {
       });
       expect(fetch).toHaveBeenCalledTimes(1);
       expect(
-        createStore(bb, bb.storage.database()).tasks.listComments(task.id),
+        createStore(bb.storage.database()).tasks.listComments(task.id),
       ).toEqual([
         expect.objectContaining({ id: human.id, kind: "user" }),
         expect.objectContaining({ id: agent.id, kind: "agent" }),
@@ -766,7 +766,7 @@ describe("bb tasks CLI", () => {
   it("traverses a project whose former single JSON response exceeds 64 KiB", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
     await plugin(bb);
-    const store = createStore(bb, bb.storage.database());
+    const store = createStore(bb.storage.database());
     const project = store.tasks.createProject({
       name: "Large project",
       prefix: "BIG",
@@ -1200,7 +1200,7 @@ describe("bb tasks CLI", () => {
         presetName: "Attached",
       }),
     ]);
-    const taskStore = createStore(bb, bb.storage.database()).tasks;
+    const taskStore = createStore(bb.storage.database()).tasks;
     taskStore.createComment({
       taskId: threads.task.id,
       kind: "agent",

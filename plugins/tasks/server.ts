@@ -30,7 +30,6 @@ export default async function plugin(bb: BbPluginApi) {
   const database = bb.storage.database();
   let mappings: ReturnType<typeof createLinearMappingStore> | undefined;
   const store = createStore(
-    bb,
     database,
     (taskId) => mappings?.getIssueMappingByTask(taskId) !== undefined,
     (taskIds) => {

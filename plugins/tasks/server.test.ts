@@ -5,13 +5,12 @@ import plugin, { TASKS_PLUGIN_VERSION } from "./server";
 describe("Tasks plugin scaffold", () => {
   it("registers the CLI and RPC surfaces after opening plugin storage", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
-    const database = bb.storage.database();
-    const databaseSpy = vi
-      .spyOn(bb.storage, "database")
-      .mockReturnValue(database);
+    const databaseSpy = vi.spyOn(bb.storage, "database");
 
     await plugin(bb);
 
+    // Tasks and Linear share the first connection. Mentions and attachments
+    // each open their own read-only connection at their registration boundary.
     expect(databaseSpy).toHaveBeenCalledTimes(3);
 
     expect(harness.registrations.services.map(({ name }) => name)).toContain(

@@ -79,7 +79,6 @@ export interface TasksApiStore {
 }
 
 export function createStore(
-  bb: BbPluginApi,
   database: ReturnType<BbPluginApi["storage"]["database"]>,
   isMappedTask: (taskId: string) => boolean = () => false,
   linearSources: (

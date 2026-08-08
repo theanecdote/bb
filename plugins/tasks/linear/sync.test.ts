@@ -35,8 +35,9 @@ function setup(active: LinearIssue[] = [issue()]) {
     pluginId: "linear-sync-test",
   });
   disposals.push(() => harness.dispose());
-  const store = createStore(bb, bb.storage.database());
-  const mappings = createLinearMappingStore(bb.storage.database());
+  const database = bb.storage.database();
+  const store = createStore(database);
+  const mappings = createLinearMappingStore(database);
   const client: LinearClient = {
     viewerAssignedIssues: vi.fn(async () => ({
       viewerId: "viewer",
@@ -242,6 +243,19 @@ describe("Linear projection and reconciliation", () => {
     });
     expect(h.warn).toHaveBeenCalledWith("Linear sync internal failure: Error");
     expect(h.warn).not.toHaveBeenCalledWith(expect.stringContaining("secret"));
+    vi.mocked(h.client.viewerAssignedIssues).mockRejectedValueOnce(
+      Object.assign(new Error("database details"), { code: "SQLITE_BUSY" }),
+    );
+    await h.service.sync();
+    expect(h.warn).toHaveBeenCalledWith(
+      "Linear sync internal failure: Error (SQLITE_BUSY)",
+    );
+    vi.mocked(h.client.viewerAssignedIssues).mockRejectedValueOnce("raw secret");
+    await h.service.sync();
+    expect(h.warn).toHaveBeenCalledWith(
+      "Linear sync internal failure: non-error rejection",
+    );
+    expect(h.warn).not.toHaveBeenCalledWith(expect.stringContaining("raw secret"));
     expect(h.service.getStatus().lastSuccessfulSyncAt).toBe(
       "2026-08-08T12:00:00.000Z",
     );
