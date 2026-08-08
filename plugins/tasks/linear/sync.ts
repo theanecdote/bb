@@ -113,6 +113,13 @@ function safeError(error: unknown): {
   return { code: "LINEAR_API_ERROR", message: "Linear synchronization failed" };
 }
 
+function diagnosticError(error: unknown): string {
+  if (!(error instanceof Error)) return "non-error rejection";
+  const code =
+    "code" in error && typeof error.code === "string" ? ` (${error.code})` : "";
+  return `${error.name}${code}: ${error.message}`;
+}
+
 export function createLinearSyncService(
   deps: LinearSyncDependencies,
 ): LinearSyncService {
@@ -353,6 +360,7 @@ export function createLinearSyncService(
       };
     } catch (cause) {
       if (cause instanceof LinearRequestCanceled) throw cause;
+      deps.warn?.(`Linear sync internal failure: ${diagnosticError(cause)}`);
       credentialsRejected =
         typeof cause === "object" &&
         cause !== null &&

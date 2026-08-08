@@ -240,6 +240,9 @@ describe("Linear projection and reconciliation", () => {
       ok: false,
       error: { message: "Linear synchronization failed" },
     });
+    expect(h.warn).toHaveBeenCalledWith(
+      "Linear sync internal failure: Error: secret details",
+    );
     expect(h.service.getStatus().lastSuccessfulSyncAt).toBe(
       "2026-08-08T12:00:00.000Z",
     );
