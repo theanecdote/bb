@@ -33,26 +33,24 @@
 - Modify: `plugins/tasks/server.ts`
 - Modify: `plugins/tasks/shared/contract.ts`
 - Modify: `plugins/tasks/attachments/index.ts`
-- Modify: `plugins/tasks/server.ts`
 - Modify: `plugins/tasks/views/detail/index.tsx`
-- Modify: `plugins/tasks/views/detail/description-save.ts`
 - Modify: `plugins/tasks/views/detail/attachments.tsx`
-- Modify: `plugins/tasks/delegate/index.ts`
 - Modify: `plugins/tasks/attachments/attachments.test.ts`
 - Modify: `plugins/tasks/delegate/delegate.test.ts`
 - Modify: `plugins/tasks/cli/cli.test.ts`
 
 **Interfaces:**
 - Adds RPC `pluginTransport: null -> { pluginId: string; attachmentBaseUrl: string; tokenUrl: string }`.
-- Uses `bb.pluginId` for backend HTTP paths and spawn attribution.
+- Uses `bb.pluginId` for backend HTTP paths; spawn attribution is already host-derived from the runtime plugin ID.
 - Preserves the registered CLI command name `tasks` independently of plugin ID.
+- The RPC is required because public frontend `BbContext` exposes only project and thread IDs, not the owning plugin ID.
 
 - [ ] **Step 1: Write alternate-ID tests**
 
 Run the plugin host as `tasks-linear`. Assert attachment URLs use
-`/api/v1/plugins/tasks-linear`, spawned threads carry
-`originPluginId: "tasks-linear"`, the nav/RPC surfaces load, and the CLI command
-is still `bb tasks`.
+`/api/v1/plugins/tasks-linear`, the delegation harness observes its configured
+runtime plugin ID, the nav/RPC surfaces load, and the CLI command is still
+`bb tasks`.
 
 - [ ] **Step 2: Run focused tests and verify failure**
 
@@ -64,9 +62,14 @@ Expected: FAIL on hard-coded `tasks` paths or attribution.
 
 Build transport URLs from `bb.pluginId` in the backend and return only safe
 paths through `pluginTransport`; keep token retrieval on the existing local
-token endpoint. Pass transport values into frontend attachment functions.
-Remove explicit `originPluginId: "tasks"` so SDK attribution uses the owning
-runtime plugin ID.
+token endpoint. Replace the hard-coded download and token paths plus upload URL
+in `views/detail/attachments.tsx`, and the hard-coded `buildAttachmentUrl` path
+in `attachments/index.ts`, with those runtime values. Pass transport values
+through the detail view into frontend attachment functions. Spawn attribution
+already uses `args.originPluginId ?? pluginId`, so make no production delegation
+change; update the test expectation to use the harness plugin ID. Record that
+persisted attachment URLs bind content to the plugin ID, so `tasks-linear` must
+not be renamed again after use.
 
 - [ ] **Step 4: Run focused tests and commit**
 
@@ -260,6 +263,9 @@ git commit -m "Project assigned Linear issues into Tasks"
 - Modify: `plugins/tasks/api/index.ts`
 - Modify: `plugins/tasks/delegate/index.ts`
 - Modify: `plugins/tasks/attachments/index.ts`
+- Modify: `plugins/tasks/server.ts`
+- Modify: `plugins/tasks/views/detail/description-save.ts`
+- Modify: `plugins/tasks/views/detail/index.tsx`
 - Modify: `plugins/tasks/cli/cli.test.ts`
 - Modify: `plugins/tasks/delegate/delegate.test.ts`
 - Modify: `plugins/tasks/attachments/attachments.test.ts`
@@ -472,7 +478,7 @@ git commit -m "Add native Linear status to Tasks"
 
 **Interfaces:**
 - Adds opt-in environment variable `LINEAR_SMOKE_API_KEY` for a read-only developer smoke test only; production still uses the BB secret setting.
-- Produces a self-contained `distribution/tasks-linear` branch whose package name is `bb-plugin-tasks-linear` and whose metadata plugin ID is `tasks-linear`.
+- Installs the merged fork checkout's renamed Tasks package as a local `path:` plugin with ID `tasks-linear`.
 
 - [ ] **Step 1: Add the opt-in read-only smoke test**
 
@@ -494,7 +500,7 @@ Expected: all pass. Inspect the bounded test log, and keep ignored source build 
 
 - [ ] **Step 3: Document operation and rollback**
 
-Document API-key creation, BB secret setting, healthy-key rotation, manual sync, project linking before delegation, import-only mapped projects, polling/rate-limit behavior, mapped task/comment attachment restriction, flattened sub-issues, and rollback. State that `tasks-linear` owns separate data from disabled builtin `tasks`.
+Document API-key creation, BB secret setting, healthy-key rotation, manual sync, project linking before delegation, import-only mapped projects, polling/rate-limit behavior, mapped task/comment attachment restriction, flattened sub-issues, and rollback. State that `tasks-linear` owns separate data from disabled builtin `tasks`, and that persisted attachment URLs make this replacement plugin ID permanent.
 
 - [ ] **Step 4: Commit and publish the feature PR to the personal fork**
 
@@ -509,13 +515,30 @@ gh pr create --repo theanecdote/bb --base main --head feat/linear-tasks-integrat
 
 Verify the PR base repository is `theanecdote/bb`, checks pass, and no upstream PR exists. Merge using the user's personal repository workflow.
 
-- [ ] **Step 6: Build and push the distribution branch**
+- [ ] **Step 6: Prepare the renamed local plugin root**
 
-In an isolated distribution worktree, change the exported package name to `bb-plugin-tasks-linear` and display name to `Tasks + Linear`, run `bb plugin build plugins/tasks` so metadata is stamped for `tasks-linear`, restore no files into the feature branch, and create an orphan export rooted at the package contents. Force-add ignored `dist/server.js`, `dist/app.js`, CSS, maps, and both metadata files alongside source, logos, skills, README, and manifest. Verify `server.meta.json` and `app.meta.json` both declare `pluginId: "tasks-linear"`, then push only to `theanecdote/bb:distribution/tasks-linear`.
+In a dedicated persistent worktree checked out from the merged fork, first
+record whether the running BB build resolves
+`builtin:tasks` from a packaged `builtin-plugins/tasks` copy or this source
+directory. Change `plugins/tasks/package.json` `name` to
+`bb-plugin-tasks-linear` and `bb.name` to `Tasks + Linear`; leave `bb.server`,
+`bb.app`, skills, and panel path/ID unchanged because they are plugin-scoped.
+This deployment worktree remains local and its manifest rename is not pushed.
+Run `pnpm install`, then
+`pnpm exec turbo run build --filter=bb-plugin-tasks-linear`. Do not create a
+distribution branch, force-add `dist`, or hand-stamp artifact metadata: BB
+rebuilds frontend artifacts for a path install and derives metadata and CSS
+scope from the package name. Verify
+`git status --porcelain plugins/tasks/package.json` shows the deliberate rename;
+ignored `dist/` remaining untracked is expected.
 
 - [ ] **Step 7: Replace and configure Tasks**
 
-Confirm builtin `tasks` remains disabled, install `git:https://github.com/theanecdote/bb.git@distribution/tasks-linear`, and verify the installed ID is `tasks-linear` while the registered CLI remains `bb tasks`. Request `linearApiKey` through BB's plugin secret settings UI; never pass it in CLI argv or chat. Reload and enable `tasks-linear`.
+Confirm builtin `tasks` remains disabled, then install
+`path:<merged-fork-checkout>/plugins/tasks`. Verify the installed ID is
+`tasks-linear` while the registered CLI remains `bb tasks`. Request
+`linearApiKey` through BB's plugin secret settings UI; never pass it in CLI argv
+or chat. Reload and enable `tasks-linear`.
 
 - [ ] **Step 8: Perform the live read-only sync smoke test**
 
@@ -523,4 +546,10 @@ Run manual sync, confirm the authenticated viewer, confirm assigned incomplete P
 
 - [ ] **Step 9: Final safety checks**
 
-Confirm no upstream PR, no webhook/public share, no secret in git/logs/RPC, no duplicate tasks, no CLI collision with disabled builtin Tasks, and no unintended Linear comments or state changes. Rollback disables/removes `tasks-linear` and re-enables `builtin:tasks`; it does not migrate replacement data.
+Confirm no upstream PR, no webhook/public share, no secret in git/logs/RPC, no
+duplicate tasks, no CLI collision with disabled builtin Tasks, and no unintended
+Linear comments or state changes. Rollback disables/removes `tasks-linear` and
+does not migrate replacement data. If the recorded builtin root is a packaged
+copy, re-enable `builtin:tasks`. If BB is running from this source checkout,
+first revert `plugins/tasks/package.json` to `bb-plugin-tasks`, run
+`pnpm install`, and only then re-enable the builtin plugin.

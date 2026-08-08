@@ -323,19 +323,31 @@ Changes are committed on a feature branch in
 `https://github.com/theanecdote/bb`, reviewed through a PR against that fork's
 `main`, and merged there only. No PR is opened against `get-bb/bb`.
 
-After merge, a distribution branch exports the modified package as
+After merge, the fork checkout's Tasks package is renamed to
 `bb-plugin-tasks-linear`, whose installable plugin ID is `tasks-linear`; BB
-therefore does not violate the reserved bundled `tasks` ID. The builtin Tasks
+therefore does not violate the reserved bundled `tasks` ID. It is installed as
+a `path:` plugin from that checkout. A `git:` install is not viable: BB installs
+git plugins' runtime dependencies with npm and rebuilds both bundles from
+source, while Tasks depends on the private, unpublished workspace package
+`@bb/shared-ui`. Path installs skip dependency installation and resolve that
+package through the checkout's existing workspace links. The builtin Tasks
 plugin remains disabled. The replacement still registers the native `bb tasks`
 CLI command, Tasks navigation, RPC, and Tasks skill.
 
-Before export, Tasks is made plugin-ID agnostic: backend paths use
+Before installation, Tasks is made plugin-ID agnostic: backend paths use
 `bb.pluginId`, frontend attachment transport paths come from a backend RPC
-value built from that ID, and spawned-thread attribution uses the runtime
-plugin ID. The distribution build is metadata-stamped as `tasks-linear` and
-includes forced-added `dist` artifacts because source `dist/` is ignored.
+value built from that ID, and spawned-thread attribution remains host-derived
+from the runtime plugin ID. The frontend RPC is necessary because the public
+app SDK context exposes project and thread IDs, but not the owning plugin ID.
+Persisted attachment references contain plugin-scoped URLs, so `tasks-linear`
+becomes a permanent identity once replacement content exists.
 
 The replacement owns a separate `tasks-linear` database, KV namespace,
 settings, and secrets. Existing builtin Tasks data is not migrated. Rollback
-disables or removes `tasks-linear` and enables `builtin:tasks`; projected tasks
-remain in the replacement namespace and do not appear in builtin Tasks.
+disables or removes `tasks-linear`; projected tasks remain in the replacement
+namespace and do not appear in builtin Tasks. In a packaged BB build,
+`builtin:tasks` is a separate copy and can then be re-enabled. In a source/dev
+build running from this fork, the builtin registry resolves to the same renamed
+`plugins/tasks` directory, so rollback also requires reverting that package
+name to `bb-plugin-tasks` and running `pnpm install`. Installation records which
+builtin root the running BB build uses before replacing the plugin.
