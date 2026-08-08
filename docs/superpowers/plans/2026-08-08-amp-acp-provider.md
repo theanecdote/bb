@@ -192,6 +192,7 @@ SMOKE_THREAD_JSON=$(bb thread spawn --json \
   --project proj_f2s6c423wk \
   --environment /home/exedev/theanecdote-bb \
   --provider acp-amp \
+  --model medium \
   --permission-mode accept-edits \
   --title 'Amp ACP transport smoke test' \
   --prompt 'ACP transport smoke test only. Do not call tools, inspect files, or modify files. Reply exactly: AMP ACP READY')
@@ -200,7 +201,7 @@ test -n "$SMOKE_THREAD_ID" && test "$SMOKE_THREAD_ID" != null
 bb thread wait "$SMOKE_THREAD_ID" --status idle --timeout 1200
 ```
 
-Expected: BB creates one thread with provider `acp-amp`, and it reaches `idle` without a permission interaction or provider failure.
+Expected: BB creates one thread with provider `acp-amp`, and it reaches `idle` without a permission interaction or provider failure. `--model medium` makes the adapter's discovered default explicit because this project has no stored `acp-amp` default.
 
 - [ ] **Step 3: Verify streamed conversation output and provider identity**
 
@@ -358,4 +359,4 @@ Expected: checks pass and the PR state is `MERGED` in `theanecdote/bb`. No PR is
 
 ## Rollback
 
-If ACP initialization or the smoke test fails after configuration, remove only the `customAcpAgents` entry with `id: "amp"` from `/Users/morgan/.bb/config.json`, preserve all other config, run `npx bb-app config refresh` on the BB server host, and remove `/home/exedev/.local/bin/amp-acp`. Do not restart Amp, terminate PID `4467`, remove the companion plugin, or alter its secret/listener.
+If binary verification, ACP initialization, provider discovery, or the smoke test fails, restore the verified Registry baseline over the active provider with `install -m 0755 /home/exedev/.local/bin/amp-acp.registry-0.9.0 /home/exedev/.local/bin/amp-acp`. Keep `customAcpAgents` unchanged; do not remove or refresh the provider configuration. The unpatched Registry 0.9.0 adapter loses BB cross-process continuation, so later follow-ups can create replacement Amp threads. Do not restart Amp, terminate PID `4467`, remove the companion plugin, or alter its secret/listener.
