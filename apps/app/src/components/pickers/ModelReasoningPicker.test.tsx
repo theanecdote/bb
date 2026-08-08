@@ -13,6 +13,7 @@ import {
   buildFuzzyRegex,
   buildModelNavRows,
   ModelReasoningPicker,
+  parseAmpExecutionModel,
 } from "./ModelReasoningPicker";
 import type { PickerOption } from "./OptionPicker";
 
@@ -146,6 +147,88 @@ afterEach(() => {
 });
 
 describe("ModelReasoningPicker", () => {
+  it("renders Amp mode and executor instead of generic reasoning", () => {
+    const onModelChange = vi.fn();
+    const { wrapper } = createQueryClientTestHarness();
+    const ampModels = ["low", "medium", "high", "ultra"].flatMap((mode) =>
+      ["local", "orb"].map((executor) => ({
+        value: `${mode}:${executor}`,
+        label: `${mode} ${executor}`,
+      })),
+    );
+    render(
+      <ModelReasoningPicker
+        providerOptions={[{ value: "acp-amp", label: "Amp" }]}
+        selectedProviderId="acp-amp"
+        hasMultipleProviders={false}
+        modelValue="medium:local"
+        modelOptions={ampModels}
+        onModelChange={onModelChange}
+        reasoningValue="medium"
+        reasoningOptions={reasoningOptions}
+        onReasoningChange={vi.fn()}
+        fastModeEnabled={false}
+        onFastModeChange={vi.fn()}
+        showFastModeToggle={false}
+        modal={false}
+      />,
+      { wrapper },
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Provider, model and reasoning" }),
+    );
+    expect(screen.getByText("Amp Mode")).not.toBeNull();
+    expect(screen.getByText("Executor")).not.toBeNull();
+    expect(screen.queryByText("Reasoning")).toBeNull();
+    fireEvent.click(screen.getByText("High"));
+    expect(onModelChange).toHaveBeenCalledWith("high:local");
+    fireEvent.click(screen.getByText("Orb"));
+    expect(onModelChange).toHaveBeenCalledWith("medium:orb");
+  });
+
+  it("parses only supported Amp execution model ids", () => {
+    expect(parseAmpExecutionModel("ultra:orb")).toEqual({
+      mode: "ultra",
+      executor: "orb",
+    });
+    expect(parseAmpExecutionModel("medium")).toBeNull();
+    expect(parseAmpExecutionModel("medium:runner")).toBeNull();
+  });
+
+  it("falls back to an offered executor when switching Amp modes", () => {
+    const onModelChange = vi.fn();
+    const { wrapper } = createQueryClientTestHarness();
+    render(
+      <ModelReasoningPicker
+        providerOptions={[{ value: "acp-amp", label: "Amp" }]}
+        selectedProviderId="acp-amp"
+        hasMultipleProviders={false}
+        modelValue="medium:orb"
+        modelOptions={[
+          { value: "low:local", label: "Low Machine" },
+          { value: "medium:local", label: "Medium Machine" },
+          { value: "medium:orb", label: "Medium Orb" },
+        ]}
+        onModelChange={onModelChange}
+        reasoningValue="medium"
+        reasoningOptions={reasoningOptions}
+        onReasoningChange={vi.fn()}
+        fastModeEnabled={false}
+        onFastModeChange={vi.fn()}
+        showFastModeToggle={false}
+        modal={false}
+      />,
+      { wrapper },
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Provider, model and reasoning" }),
+    );
+    fireEvent.click(screen.getByText("Low"));
+    expect(onModelChange).toHaveBeenCalledWith("low:local");
+  });
+
   it("stays open while changing both the model and reasoning effort", () => {
     const { onModelChange, onReasoningChange } = renderPicker({
       modelOptions: [...codexModels, { value: "gpt-5.2", label: "GPT-5.2" }],

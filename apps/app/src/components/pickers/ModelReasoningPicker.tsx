@@ -78,6 +78,33 @@ const FAILED_TO_LOAD_MODELS_LABEL = "Failed to load models";
 // scan by eye, so the search box is more clutter than help.
 const MODEL_SEARCH_MIN_OPTIONS = 5;
 const MODEL_PICKER_MENU_WIDTH_CLASS_NAME = "w-max min-w-52 max-w-80";
+const AMP_ACP_PROVIDER_ID = "acp-amp";
+const AMP_MODE_LABELS = {
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  ultra: "Ultra",
+} as const;
+type AmpMode = keyof typeof AMP_MODE_LABELS;
+type AmpExecutor = "local" | "orb";
+
+export function parseAmpExecutionModel(
+  value: string,
+): { mode: AmpMode; executor: AmpExecutor } | null {
+  const [mode, executor, extra] = value.split(":");
+  if (
+    extra !== undefined ||
+    !(mode in AMP_MODE_LABELS) ||
+    (executor !== "local" && executor !== "orb")
+  ) {
+    return null;
+  }
+  return { mode: mode as AmpMode, executor };
+}
+
+function ampExecutionModel(mode: AmpMode, executor: AmpExecutor): string {
+  return `${mode}:${executor}`;
+}
 
 // Splits a trailing parenthetical off a model label (e.g. "Opus 4.8 (1M)" →
 // base "Opus 4.8", tag "1M") so the tag can render as a small, muted suffix
@@ -504,6 +531,7 @@ export function ModelReasoningPicker({
   const showSelectedFastMode =
     hasSelectedModel && fastModeEnabled && modelOptions.length > 0;
   const showReasoningSection =
+    activeProviderId !== AMP_ACP_PROVIDER_ID &&
     !isShowingModelError &&
     activeReasoningOptions.length > 0 &&
     (isPreviewing
@@ -826,6 +854,7 @@ export function ModelReasoningPicker({
   }
 
   const showSearchInput =
+    activeProviderId !== AMP_ACP_PROVIDER_ID &&
     hasActiveModelOptions &&
     !activeModelIsLoading &&
     !isShowingModelError &&
@@ -936,7 +965,11 @@ export function ModelReasoningPicker({
             )}
           >
             {isShowingModelError ? null : (
-              <MenuSectionLabel>Model</MenuSectionLabel>
+              <MenuSectionLabel>
+                {activeProviderId === AMP_ACP_PROVIDER_ID
+                  ? "Amp Mode"
+                  : "Model"}
+              </MenuSectionLabel>
             )}
             {activeModelIsLoading ? (
               <div
@@ -947,6 +980,16 @@ export function ModelReasoningPicker({
               >
                 Loading models…
               </div>
+            ) : hasActiveModelOptions &&
+              activeProviderId === AMP_ACP_PROVIDER_ID ? (
+              <AmpExecutionRows
+                options={activeModelOptions}
+                value={
+                  isPreviewing ? (previewDefaultModel?.model ?? "") : modelValue
+                }
+                selected={!isPreviewing}
+                onChange={handleModelSelect}
+              />
             ) : hasActiveModelOptions ? (
               <>
                 {navRows.map((row, index) => {
@@ -1101,6 +1144,69 @@ export function ModelReasoningPicker({
 
 // Mirrors DropdownMenuLabel spacing/typography while staying sticky in the
 // scrollable model list.
+function AmpExecutionRows({
+  options,
+  value,
+  selected,
+  onChange,
+}: {
+  options: readonly PickerOption<string>[];
+  value: string;
+  selected: boolean;
+  onChange: (value: string) => void;
+}) {
+  const selections = options
+    .map((option) => parseAmpExecutionModel(option.value))
+    .filter(
+      (selection): selection is { mode: AmpMode; executor: AmpExecutor } =>
+        selection !== null,
+    );
+  const current = parseAmpExecutionModel(value) ?? selections[0] ?? null;
+  if (current === null) return null;
+  const modes = Object.keys(AMP_MODE_LABELS).filter((mode) =>
+    selections.some((selection) => selection.mode === mode),
+  ) as AmpMode[];
+  const executors = (["local", "orb"] as const).filter((executor) =>
+    selections.some(
+      (selection) =>
+        selection.mode === current.mode && selection.executor === executor,
+    ),
+  );
+
+  return (
+    <>
+      {modes.map((mode) => (
+        <MenuRowButton
+          key={mode}
+          label={AMP_MODE_LABELS[mode]}
+          selected={selected && current.mode === mode}
+          onClick={() => {
+            const executor = selections.some(
+              (selection) =>
+                selection.mode === mode &&
+                selection.executor === current.executor,
+            )
+              ? current.executor
+              : selections.find((selection) => selection.mode === mode)!
+                  .executor;
+            onChange(ampExecutionModel(mode, executor));
+          }}
+        />
+      ))}
+      <div className="-mx-1 mt-1 border-t border-border pt-0" />
+      <MenuSectionLabel>Executor</MenuSectionLabel>
+      {executors.map((executor) => (
+        <MenuRowButton
+          key={executor}
+          label={executor === "local" ? "Machine" : "Orb"}
+          selected={selected && current.executor === executor}
+          onClick={() => onChange(ampExecutionModel(current.mode, executor))}
+        />
+      ))}
+    </>
+  );
+}
+
 function MenuSectionLabel({ children }: { children: ReactNode }) {
   const isCompactViewport = useIsCompactViewport();
 
