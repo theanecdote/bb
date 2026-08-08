@@ -124,7 +124,10 @@ export const taskSchema = z
     updatedAt: z.string(),
     labelIds: z.array(idSchema),
     linearMapped: z.boolean(),
-    linearSource: z.object({ identifier: z.string(), url: z.string().url() }).strict().nullable(),
+    linearSource: z
+      .object({ identifier: z.string(), url: z.string().url() })
+      .strict()
+      .nullable(),
   })
   .strict();
 
@@ -274,6 +277,27 @@ const taskMutationResultSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(false), error: tasksDomainErrorSchema }).strict(),
 ]);
 
+const taskListResultSchema = z.discriminatedUnion("ok", [
+  z
+    .object({
+      ok: z.literal(true),
+      tasks: z.array(taskSchema),
+      nextCursor: z.string().nullable(),
+    })
+    .strict(),
+  z
+    .object({
+      ok: z.literal(false),
+      error: z
+        .object({
+          code: z.literal("stale_cursor"),
+          message: z.string(),
+        })
+        .strict(),
+    })
+    .strict(),
+]);
+
 const projectMutationResultSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true), project: projectSchema }).strict(),
   z.object({ ok: z.literal(false), error: tasksDomainErrorSchema }).strict(),
@@ -419,16 +443,51 @@ const updatePresetInputSchema = z
 export const tasksRpcContract = defineRpcContract({
   linearStatus: {
     input: z.null(),
-    output: z.object({
-      configured: z.boolean(), syncing: z.boolean(), viewerName: z.string().nullable(),
-      activeIssueCount: z.number().int().nonnegative(), lastSuccessfulSyncAt: z.string().nullable(),
-      lastAttemptAt: z.string().nullable(), lastError: z.object({ code: z.enum(["LINEAR_MAPPING_ERROR", "LINEAR_RATE_LIMITED", "LINEAR_API_ERROR"]), message: z.string() }).strict().nullable(),
-      retryAt: z.string().nullable(),
-    }).strict(),
+    output: z
+      .object({
+        configured: z.boolean(),
+        syncing: z.boolean(),
+        viewerName: z.string().nullable(),
+        activeIssueCount: z.number().int().nonnegative(),
+        lastSuccessfulSyncAt: z.string().nullable(),
+        lastAttemptAt: z.string().nullable(),
+        lastError: z
+          .object({
+            code: z.enum([
+              "LINEAR_MAPPING_ERROR",
+              "LINEAR_RATE_LIMITED",
+              "LINEAR_API_ERROR",
+            ]),
+            message: z.string(),
+          })
+          .strict()
+          .nullable(),
+        retryAt: z.string().nullable(),
+      })
+      .strict(),
   },
   linearSyncNow: {
     input: z.null(),
-    output: z.object({ ok: z.boolean(), createdProjects: z.number().int().nonnegative(), createdTasks: z.number().int().nonnegative(), updatedTasks: z.number().int().nonnegative(), deactivatedTasks: z.number().int().nonnegative(), error: z.object({ code: z.enum(["LINEAR_MAPPING_ERROR", "LINEAR_RATE_LIMITED", "LINEAR_API_ERROR"]), message: z.string() }).strict().optional() }).strict(),
+    output: z
+      .object({
+        ok: z.boolean(),
+        createdProjects: z.number().int().nonnegative(),
+        createdTasks: z.number().int().nonnegative(),
+        updatedTasks: z.number().int().nonnegative(),
+        deactivatedTasks: z.number().int().nonnegative(),
+        error: z
+          .object({
+            code: z.enum([
+              "LINEAR_MAPPING_ERROR",
+              "LINEAR_RATE_LIMITED",
+              "LINEAR_API_ERROR",
+            ]),
+            message: z.string(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict(),
   },
   pluginTransport: {
     input: z.null(),
@@ -566,12 +625,7 @@ export const tasksRpcContract = defineRpcContract({
         cursor: nonBlankStringSchema.optional(),
       })
       .strict(),
-    output: z
-      .object({
-        tasks: z.array(taskSchema),
-        nextCursor: z.string().nullable(),
-      })
-      .strict(),
+    output: taskListResultSchema,
   },
   boardMove: {
     input: z
@@ -828,6 +882,7 @@ export type TaskPullRequest = z.infer<typeof taskPullRequestSchema>;
 export type Preset = z.infer<typeof presetSchema>;
 export type TasksDomainError = z.infer<typeof tasksDomainErrorSchema>;
 export type TaskMutationResult = z.infer<typeof taskMutationResultSchema>;
+export type TaskListResult = z.infer<typeof taskListResultSchema>;
 export type ProjectMutationResult = z.infer<typeof projectMutationResultSchema>;
 export type BbProjectOption = z.infer<
   (typeof tasksRpcContract)["listBbProjects"]["output"]

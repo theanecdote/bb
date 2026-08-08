@@ -116,7 +116,7 @@ describe("NewTaskDialog", () => {
           listFolders: () => ({ folders: [] }),
           listPresets: () => ({ presets: [] }),
           sidebarSummary: () => ({ projects: [] }),
-          listTasks: () => ({ tasks: [] }),
+          listTasks: () => ({ ok: true, tasks: [] }),
           listLabels: () => ({ labels: [] }),
           createTask: (input: Record<string, unknown>) => {
             createCalls.push(input);
@@ -161,7 +161,7 @@ describe("NewTaskDialog", () => {
           listFolders: () => ({ folders: [] }),
           listPresets: () => ({ presets: [] }),
           sidebarSummary: () => ({ projects: [] }),
-          listTasks: () => ({ tasks: [] }),
+          listTasks: () => ({ ok: true, tasks: [] }),
           listLabels: () => ({ labels: [] }),
           createTask: (input: Record<string, unknown>) => {
             createCalls.push(input);
@@ -194,7 +194,7 @@ describe("NewTaskDialog", () => {
           listFolders: () => ({ folders: [] }),
           listPresets: () => ({ presets: [] }),
           sidebarSummary: () => ({ projects: [] }),
-          listTasks: () => ({ tasks: [] }),
+          listTasks: () => ({ ok: true, tasks: [] }),
           listLabels: () => ({ labels: [] }),
           createTask: () => ({
             ok: false,
@@ -228,7 +228,7 @@ describe("NewTaskDialog", () => {
           listFolders: () => ({ folders: [] }),
           listPresets: () => ({ presets: [] }),
           sidebarSummary: () => ({ projects: [] }),
-          listTasks: () => ({ tasks: [] }),
+          listTasks: () => ({ ok: true, tasks: [] }),
           // An existing label so cmdk renders its empty state (not the
           // no-labels-at-all fallback) when the query matches nothing.
           listLabels: () => ({
@@ -342,7 +342,7 @@ describe("NewTaskDialog attachments", () => {
     listFolders: () => ({ folders: [] }),
     listPresets: () => ({ presets: [] }),
     sidebarSummary: () => ({ projects: [] }),
-    listTasks: () => ({ tasks: [] }),
+    listTasks: () => ({ ok: true, tasks: [] }),
     listLabels: () => ({ labels: [] }),
     createTask: (input: Record<string, unknown>) => ({
       ok: true,
@@ -727,7 +727,7 @@ describe("PresetDialog environment section", () => {
           listFolders: () => ({ folders: [] }),
           listPresets: () => ({ presets }),
           sidebarSummary: () => ({ projects: [] }),
-          listTasks: () => ({ tasks: [] }),
+          listTasks: () => ({ ok: true, tasks: [] }),
           listLabels: () => ({ labels: [] }),
           listProviders: () => ({
             providers: [
@@ -797,7 +797,7 @@ describe("NewProjectDialog", () => {
           listFolders: () => ({ folders: [] }),
           listPresets: () => ({ presets: [] }),
           sidebarSummary: () => ({ projects: [] }),
-          listTasks: () => ({ tasks: [] }),
+          listTasks: () => ({ ok: true, tasks: [] }),
           ...overrides,
         },
       },

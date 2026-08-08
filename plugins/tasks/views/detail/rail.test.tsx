@@ -71,7 +71,9 @@ function detailRpc(
     listPresets: () => ({ presets: [] }),
     sidebarSummary: () => ({ projects: [] }),
     listTasks: (input: { parentTaskId?: string } | null) =>
-      input?.parentTaskId ? { tasks: [] } : { tasks: [task] },
+      input?.parentTaskId
+        ? { ok: true, tasks: [] }
+        : { ok: true, tasks: [task] },
     getTaskByKey: () => ({ task }),
     listLabels: () => ({ labels: [] }),
     listAttachments: () => ({ attachments: [] }),

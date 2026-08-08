@@ -32,19 +32,22 @@ export async function listAllTasks(
   for (let attempt = 0; attempt < 3; attempt++) {
     const tasks: Task[] = [];
     let cursor: string | undefined;
-    try {
-      do {
-        const page = await rpc.call("listTasks", {
-          ...input, limit: TASKS_PAGE_MAX_LIMIT,
-          ...(cursor === undefined ? {} : { cursor }),
-        });
-        tasks.push(...page.tasks);
-        cursor = page.nextCursor ?? undefined;
-      } while (cursor !== undefined);
-      return tasks;
-    } catch (error) {
-      if (attempt === 2 || typeof error !== "object" || error === null || !("code" in error) || error.code !== "stale_cursor") throw error;
-    }
+    let stale = false;
+    do {
+      const page = await rpc.call("listTasks", {
+        ...input,
+        limit: TASKS_PAGE_MAX_LIMIT,
+        ...(cursor === undefined ? {} : { cursor }),
+      });
+      if (!page.ok) {
+        stale = true;
+        break;
+      }
+      tasks.push(...page.tasks);
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor !== undefined);
+    if (!stale) return tasks;
+    if (attempt === 2) throw new Error("Task list changed too frequently");
   }
   throw new Error("Task list changed too frequently");
 }
@@ -206,6 +209,7 @@ export function useMentionItems() {
           .call("searchThreads", { query: trimmed, limit: 5 })
           .catch(() => ({ threads: [] })),
       ]);
+      if (!taskResult.ok) throw new Error(taskResult.error.message);
       return [
         ...taskResult.tasks.slice(0, 8).map((task) => ({
           type: "task" as const,

@@ -5,19 +5,35 @@ describe("listAllTasks", () => {
   it("restarts a concurrent-revision page from the beginning", async () => {
     const first = { id: "first" };
     const replacement = { id: "replacement" };
-    const call = vi.fn()
-      .mockResolvedValueOnce({ tasks: [first], nextCursor: "old-revision" })
-      .mockRejectedValueOnce(Object.assign(new Error("stale"), { code: "stale_cursor" }))
-      .mockResolvedValueOnce({ tasks: [replacement], nextCursor: null });
+    const call = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        tasks: [first],
+        nextCursor: "old-revision",
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { code: "stale_cursor", message: "stale" },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        tasks: [replacement],
+        nextCursor: null,
+      });
     const tasks = await listAllTasks({ call } as never);
     expect(tasks).toEqual([replacement]);
     expect(call.mock.calls[2]?.[1]).not.toHaveProperty("cursor");
   });
 
   it("bounds stale-cursor restarts to three attempts", async () => {
-    const error = Object.assign(new Error("stale"), { code: "stale_cursor" });
-    const call = vi.fn().mockRejectedValue(error);
-    await expect(listAllTasks({ call } as never)).rejects.toBe(error);
+    const call = vi.fn().mockResolvedValue({
+      ok: false,
+      error: { code: "stale_cursor", message: "stale" },
+    });
+    await expect(listAllTasks({ call } as never)).rejects.toThrow(
+      "Task list changed too frequently",
+    );
     expect(call).toHaveBeenCalledTimes(3);
   });
 });

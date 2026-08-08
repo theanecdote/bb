@@ -387,22 +387,31 @@ async function listAllTasks(
   domain: TasksDomain,
   input: ListTasksInput,
 ): Promise<Task[]> {
-  const tasks: Task[] = [];
-  let cursor = input.cursor;
-  do {
-    const page = tasksRpcContract.listTasks.output.parse(
-      await domain.listTasks(
-        tasksRpcContract.listTasks.input.parse({
-          ...input,
-          limit: TASKS_PAGE_MAX_LIMIT,
-          ...(cursor === undefined ? {} : { cursor }),
-        }),
-      ),
-    );
-    tasks.push(...page.tasks);
-    cursor = page.nextCursor ?? undefined;
-  } while (cursor !== undefined);
-  return tasks;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const tasks: Task[] = [];
+    let cursor = attempt === 0 ? input.cursor : undefined;
+    let stale = false;
+    do {
+      const page = tasksRpcContract.listTasks.output.parse(
+        await domain.listTasks(
+          tasksRpcContract.listTasks.input.parse({
+            ...input,
+            limit: TASKS_PAGE_MAX_LIMIT,
+            ...(cursor === undefined ? {} : { cursor }),
+          }),
+        ),
+      );
+      if (!page.ok) {
+        stale = true;
+        break;
+      }
+      tasks.push(...page.tasks);
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor !== undefined);
+    if (!stale) return tasks;
+    if (attempt === 2) throw new CliError("Task list changed too frequently");
+  }
+  throw new CliError("Task list changed too frequently");
 }
 
 function taskPageLimit(args: ParsedArgs): number {
@@ -1026,6 +1035,7 @@ async function runList(
       }),
     ),
   );
+  if (!result.ok) throw new CliError(result.error.message);
   const tasks = [];
   for (const task of result.tasks) {
     const threadResult = tasksRpcContract.listTaskThreads.output.parse(
@@ -1338,16 +1348,21 @@ async function runComment(
   if (body === undefined)
     throw new CliError("missing required --body or --body-file");
   if (!body.trim()) throw new CliError("comment body must not be blank");
-  const comment = await createComment(bb, store, {
-    taskId: task.id,
-    kind: ctx.threadId ? "agent" : "user",
-    authorName: option(args, "author") ?? taskAuthor(ctx),
-    presetName: null,
-    threadId: ctx.threadId ?? null,
-    body,
-    notify: args.flags.has("notify"),
-    mutationOrigin: "cli",
-  }, mutations);
+  const comment = await createComment(
+    bb,
+    store,
+    {
+      taskId: task.id,
+      kind: ctx.threadId ? "agent" : "user",
+      authorName: option(args, "author") ?? taskAuthor(ctx),
+      presetName: null,
+      threadId: ctx.threadId ?? null,
+      body,
+      notify: args.flags.has("notify"),
+      mutationOrigin: "cli",
+    },
+    mutations,
+  );
   return args.flags.has("json")
     ? json({ comment })
     : `Commented on ${task.key}  ${comment.id}`;
@@ -2007,10 +2022,18 @@ export function registerTasksCli(
                     ["Syncing", result.syncing],
                     ["Viewer", result.viewerName ?? "-"],
                     ["Active issues", result.activeIssueCount],
-                    ["Last successful sync", result.lastSuccessfulSyncAt ?? "-"],
+                    [
+                      "Last successful sync",
+                      result.lastSuccessfulSyncAt ?? "-",
+                    ],
                     ["Last attempt", result.lastAttemptAt ?? "-"],
                     ["Retry at", result.retryAt ?? "-"],
-                    ["Last error", result.lastError ? `${result.lastError.code}: ${result.lastError.message}` : "-"],
+                    [
+                      "Last error",
+                      result.lastError
+                        ? `${result.lastError.code}: ${result.lastError.message}`
+                        : "-",
+                    ],
                   ]);
             } else if (action === "sync") {
               const result = tasksRpcContract.linearSyncNow.output.parse(
@@ -2024,10 +2047,17 @@ export function registerTasksCli(
                     ["Created tasks", result.createdTasks],
                     ["Updated tasks", result.updatedTasks],
                     ["Deactivated tasks", result.deactivatedTasks],
-                    ["Error", result.error ? `${result.error.code}: ${result.error.message}` : "-"],
+                    [
+                      "Error",
+                      result.error
+                        ? `${result.error.code}: ${result.error.message}`
+                        : "-",
+                    ],
                   ]);
             } else {
-              throw new CliError(`unknown linear command: ${action}; run bb tasks linear --help`);
+              throw new CliError(
+                `unknown linear command: ${action}; run bb tasks linear --help`,
+              );
             }
             break;
           }
@@ -2061,7 +2091,14 @@ export function registerTasksCli(
             stdout = await runLabel(domain, rest);
             break;
           case "attachment":
-            stdout = await runAttachment(bb, store, domain, ctx, rest, mutations);
+            stdout = await runAttachment(
+              bb,
+              store,
+              domain,
+              ctx,
+              rest,
+              mutations,
+            );
             break;
           case "preset":
             stdout = await runPreset(domain, rest);

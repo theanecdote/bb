@@ -1,6 +1,7 @@
 import type { BbPluginApi, PluginRpcHandlers } from "@bb/plugin-sdk";
 import {
   createTasksStore,
+  TasksPageCursorError,
   type Attachment as StoredAttachment,
   type Comment as StoredComment,
   type Task as StoredTask,
@@ -72,13 +73,17 @@ export interface TasksApiStore {
   projectPrefixExists(prefix: string, excludingProjectId: string): boolean;
   sidebarSummary(): SidebarProjectSummary[];
   isMappedTask(taskId: string): boolean;
-  linearSources(taskIds: readonly string[]): Map<string, { identifier: string; url: string }>;
+  linearSources(
+    taskIds: readonly string[],
+  ): Map<string, { identifier: string; url: string }>;
 }
 
 export function createStore(
   bb: BbPluginApi,
   isMappedTask: (taskId: string) => boolean = () => false,
-  linearSources: (taskIds: readonly string[]) => Map<string, { identifier: string; url: string }> = () => new Map(),
+  linearSources: (
+    taskIds: readonly string[],
+  ) => Map<string, { identifier: string; url: string }> = () => new Map(),
 ): TasksApiStore {
   const database = bb.storage.database();
   const tasks = createTasksStore(database);
@@ -684,7 +689,10 @@ export function registerHandlers(
   bb: BbPluginApi,
   store: TasksApiStore,
   mutations?: LinearMutationBridge,
-  linear?: { status(): Promise<LinearSyncStatus & { configured: boolean }>; sync(): Promise<LinearSyncResult> },
+  linear?: {
+    status(): Promise<LinearSyncStatus & { configured: boolean }>;
+    sync(): Promise<LinearSyncResult>;
+  },
 ): PluginRpcHandlers<typeof tasksRpcContract> {
   return {
     linearStatus: async () => await linear!.status(),
@@ -920,22 +928,36 @@ export function registerHandlers(
       return { deleted };
     },
     listTasks(input) {
-      const page = store.tasks.listTasksPage({
-        projectId: input.projectId,
-        statuses: input.statuses,
-        priorities: input.priorities,
-        labelIds: input.labelIds,
-        activeOnly: input.activeOnly,
-        parentTaskId: input.parentTaskId,
-        search: input.search,
-        sort: input.sort,
-        limit: input.limit,
-        cursor: input.cursor,
-      });
-      return {
-        tasks: apiTasks(store, page.tasks),
-        nextCursor: page.nextCursor,
-      };
+      try {
+        const page = store.tasks.listTasksPage({
+          projectId: input.projectId,
+          statuses: input.statuses,
+          priorities: input.priorities,
+          labelIds: input.labelIds,
+          activeOnly: input.activeOnly,
+          parentTaskId: input.parentTaskId,
+          search: input.search,
+          sort: input.sort,
+          limit: input.limit,
+          cursor: input.cursor,
+        });
+        return {
+          ok: true,
+          tasks: apiTasks(store, page.tasks),
+          nextCursor: page.nextCursor,
+        };
+      } catch (error) {
+        if (
+          error instanceof TasksPageCursorError &&
+          error.code === "stale_cursor"
+        ) {
+          return {
+            ok: false,
+            error: { code: error.code, message: error.message },
+          };
+        }
+        throw error;
+      }
     },
     async boardMove(input) {
       try {
@@ -1212,7 +1234,10 @@ export function registerTasksApi(
   bb: BbPluginApi,
   store: TasksApiStore,
   mutations?: LinearMutationBridge,
-  linear?: { status(): Promise<LinearSyncStatus & { configured: boolean }>; sync(): Promise<LinearSyncResult> },
+  linear?: {
+    status(): Promise<LinearSyncStatus & { configured: boolean }>;
+    sync(): Promise<LinearSyncResult>;
+  },
 ): ReturnType<typeof registerHandlers> {
   const handlers = registerHandlers(bb, store, mutations, linear);
   bb.rpc.register(tasksRpcContract, handlers);

@@ -10,6 +10,39 @@ import { tasksRpcContract } from "../shared/contract";
 import { createComment, createStore, registerTasksApi } from ".";
 
 describe("Tasks RPC domain API", () => {
+  it("returns a typed stale-cursor result after the task-list revision changes", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
+    const store = createStore(bb);
+    registerTasksApi(bb, store);
+    const project = store.tasks.createProject({
+      name: "Pagination",
+      prefix: "PAGE",
+      color: "blue",
+    });
+    store.tasks.createTask({ projectId: project.id, title: "First" });
+    store.tasks.createTask({ projectId: project.id, title: "Second" });
+
+    const first = tasksRpcContract.listTasks.output.parse(
+      await harness.callRpc("listTasks", { limit: 1 }),
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok || first.nextCursor === null)
+      throw new Error("expected cursor");
+    store.tasks.createTask({ projectId: project.id, title: "Revision bump" });
+
+    await expect(
+      harness.callRpc("listTasks", { limit: 1, cursor: first.nextCursor }),
+    ).resolves.toEqual({
+      ok: false,
+      error: {
+        code: "stale_cursor",
+        message:
+          "task-list data changed after this cursor was issued; restart pagination without --cursor",
+      },
+    });
+    await harness.dispose();
+  });
+
   it("deletes through the typed RPC policy and rejects saved-description references", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
     const store = createStore(bb);
@@ -1033,6 +1066,8 @@ describe("Tasks RPC domain API", () => {
         statuses: ["done"],
       }),
     );
+    expect(listResult).toMatchObject({ ok: true });
+    if (!listResult.ok) throw new Error(listResult.error.message);
     expect(listResult.tasks).toEqual([
       expect.objectContaining({
         id: createResult.task.id,

@@ -37,7 +37,7 @@ function rpc(
     listFolders: () => ({ folders: [] }),
     listPresets: () => ({ presets: [] }),
     sidebarSummary: () => ({ projects: [] }),
-    listTasks: () => ({ tasks: [] }),
+    listTasks: () => ({ ok: true, tasks: [] }),
   };
 }
 

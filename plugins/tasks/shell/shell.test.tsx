@@ -75,7 +75,7 @@ function seededRpc(overrides: Record<string, unknown> = {}) {
     sidebarSummary: () => ({
       projects: [{ projectId: PROJECT_ID, taskCount: 3, activeAgentCount: 1 }],
     }),
-    listTasks: () => ({ tasks: [] }),
+    listTasks: () => ({ ok: true, tasks: [] }),
     getTaskByKey: () => ({ task: null }),
     ...overrides,
   };
@@ -167,7 +167,7 @@ describe("task pager", () => {
       { subPath: "task/TSK-4" },
       {
         rpc: seededRpc({
-          listTasks: () => ({ tasks }),
+          listTasks: () => ({ ok: true, tasks }),
           listLabels: () => ({ labels: [] }),
           listAttachments: () => ({ attachments: [] }),
           listTaskThreads: () => ({ taskThreads: [] }),
@@ -317,7 +317,7 @@ describe("tasks app shell", () => {
         rpc: seededRpc({
           listTasks: () => {
             requests += 1;
-            return { tasks: [{ ...task, title }] };
+            return { ok: true, tasks: [{ ...task, title }] };
           },
           listLabels: () => ({ labels: [] }),
           listAttachments: () => ({ attachments: [] }),
@@ -356,7 +356,7 @@ describe("tasks app shell", () => {
         rpc: seededRpc({
           listTasks: async () => {
             if (!serverAvailable) throw new Error("server unavailable");
-            return { tasks: [task] };
+            return { ok: true, tasks: [task] };
           },
           listLabels: () => ({ labels: [] }),
           listAttachments: () => ({ attachments: [] }),
@@ -390,7 +390,7 @@ describe("tasks app shell", () => {
       { subPath: "all" },
       {
         rpc: seededRpc({
-          listTasks: () => ({ tasks: [{ ...task, title }] }),
+          listTasks: () => ({ ok: true, tasks: [{ ...task, title }] }),
           listLabels: () => ({ labels: [] }),
           listAttachments: () => ({ attachments: [] }),
           listTaskThreads: () => ({ taskThreads: [] }),
@@ -418,6 +418,7 @@ describe("tasks app shell", () => {
       {
         rpc: seededRpc({
           listTasks: () => ({
+            ok: true,
             tasks: [
               {
                 ...pagerTask("TSK-4", "todo", 1),
@@ -492,13 +493,13 @@ describe("tasks app shell", () => {
           listTasks: () => {
             listTasksCalls += 1;
             if (!holdListTasks) {
-              return { tasks: [{ ...task, title }] };
+              return { ok: true, tasks: [{ ...task, title }] };
             }
             // Generation-driven fetches stay pending until released so the
             // shared in-flight bit tracks real request completion.
             return new Promise((resolve) => {
               pendingResolvers.push(() =>
-                resolve({ tasks: [{ ...task, title }] }),
+                resolve({ ok: true, tasks: [{ ...task, title }] }),
               );
             });
           },
@@ -600,7 +601,7 @@ describe("tasks app shell", () => {
         rpc: seededRpc({
           listTasks: () => {
             if (shouldFail) throw new Error("refresh failed");
-            return { tasks: [{ ...task, title }] };
+            return { ok: true, tasks: [{ ...task, title }] };
           },
           listLabels: () => ({ labels: [] }),
           listAttachments: () => ({ attachments: [] }),
@@ -647,7 +648,7 @@ describe("tasks app shell", () => {
       {
         rpc: seededRpc({
           getTaskByKey: () => ({ task: { ...task, title } }),
-          listTasks: () => ({ tasks: [{ ...task, title }] }),
+          listTasks: () => ({ ok: true, tasks: [{ ...task, title }] }),
           listLabels: () => ({ labels: [] }),
           listAttachments: () => ({ attachments: [] }),
           listTaskThreads: () => ({ taskThreads: [] }),
@@ -688,7 +689,7 @@ describe("tasks app shell", () => {
     const detailRpc = (task: typeof mapped) =>
       seededRpc({
         getTaskByKey: () => ({ task }),
-        listTasks: () => ({ tasks: [task] }),
+        listTasks: () => ({ ok: true, tasks: [task] }),
         listLabels: () => ({ labels: [] }),
         listAttachments: () => ({ attachments: [] }),
         listTaskThreads: () => ({ taskThreads: [] }),

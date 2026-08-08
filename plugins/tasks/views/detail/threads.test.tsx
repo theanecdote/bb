@@ -84,7 +84,9 @@ function detailRpc(overrides: Record<string, unknown> = {}) {
     sidebarSummary: () => ({ projects: [] }),
     getTaskByKey: () => ({ task }),
     listTasks: (input: { parentTaskId?: string } | null) =>
-      input?.parentTaskId ? { tasks: [] } : { tasks: [task] },
+      input?.parentTaskId
+        ? { ok: true, tasks: [] }
+        : { ok: true, tasks: [task] },
     listLabels: () => ({ labels: [] }),
     listAttachments: () => ({ attachments: [] }),
     listTaskThreads: () => ({
