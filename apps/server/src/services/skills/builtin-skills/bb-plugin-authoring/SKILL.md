@@ -1042,8 +1042,9 @@ Slot props contracts (versioned, additive-only):
   none was passed); identical action+params re-opens focus the existing
   tab (title refreshed), different params open sibling tabs. The tab pill
   shows your compact plugin icon + the tab title. Set `iconOnly: true` for a
-  branded action whose compact icon is sufficient in the constrained tab strip;
-  the title remains its accessible name and tooltip. Errors thrown from `run`
+  branded action with a wide `branding.logo` intended to stand alone in the
+  constrained tab strip; BB falls back to the compact icon when no logo exists,
+  and the title remains its accessible name and tooltip. Errors thrown from `run`
   (sync or async) are contained and logged, never breaking the launcher.
   `layout` frames the tab content: `"padded"` (default) wraps `component`
   in the panel's scroll container with standard padding — right for

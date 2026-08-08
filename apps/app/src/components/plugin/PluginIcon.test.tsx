@@ -7,7 +7,7 @@ import {
   setPluginLogoUrls,
 } from "@/lib/plugin-logos";
 
-const { PluginIcon } = await import("./PluginIcon");
+const { PluginIcon, PluginWordmark } = await import("./PluginIcon");
 
 afterEach(() => {
   cleanup();
@@ -102,4 +102,30 @@ it("uses a plugin-owned compact SVG before named icon hints", () => {
   expect(asset).toBeTruthy();
   expect(asset?.getAttribute("style")).toContain(compactIconUrl);
   expect(view.container.querySelector("[data-icon]")).toBeNull();
+});
+
+it("uses the rich logo only for an explicitly wide wordmark", () => {
+  const logoUrl = "/api/v1/plugins/amp/assets/logo?h=abc";
+  setPluginLogoUrls(
+    new Map([
+      [
+        "amp",
+        {
+          displayName: "Amp",
+          icon: null,
+          compactIconUrl: "/api/v1/plugins/amp/assets/icon?h=def",
+          logoUrl,
+          logoDarkUrl: "/api/v1/plugins/amp/assets/logo-dark?h=ghi",
+        },
+      ],
+    ]),
+  );
+
+  const view = render(<PluginWordmark pluginId="amp" icon={null} />);
+  const wordmark = view.container.querySelector(
+    `[data-plugin-wordmark-asset="${logoUrl}"]`,
+  );
+  expect(wordmark).toBeTruthy();
+  expect(wordmark?.getAttribute("style")).toContain(logoUrl);
+  expect(view.container.querySelector("[data-plugin-icon-asset]")).toBeNull();
 });
