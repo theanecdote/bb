@@ -524,18 +524,38 @@ directory. Change `plugins/tasks/package.json` `name` to
 `bb-plugin-tasks-linear` and `bb.name` to `Tasks + Linear`; leave `bb.server`,
 `bb.app`, skills, and panel path/ID unchanged because they are plugin-scoped.
 This deployment worktree remains local and its manifest rename is not pushed.
-Run `pnpm install`, then
-`pnpm exec turbo run build --filter=bb-plugin-tasks-linear`. Do not create a
-distribution branch, force-add `dist`, or hand-stamp artifact metadata: BB
-rebuilds frontend artifacts for a path install and derives metadata and CSS
-scope from the package name. Verify
-`git status --porcelain plugins/tasks/package.json` shows the deliberate rename;
-ignored `dist/` remaining untracked is expected.
+Run `pnpm install --no-frozen-lockfile`, then build the SDK before the plugin:
+
+```bash
+pnpm exec turbo run build --filter=@bb/plugin-sdk
+pnpm exec turbo run build --filter=bb-plugin-tasks-linear
+test -f packages/plugin-sdk/dist/index.js
+```
+
+The explicit SDK build is required because the rename no longer matches the
+`bb-plugin-tasks#build` key that supplies that ordering, and BB's path install
+also rebuilds the frontend without the SDK's `source` export condition. Do not
+create a distribution branch, force-add `dist`, or hand-stamp artifact
+metadata: BB derives metadata and CSS scope from the package name. Verify
+`git status --porcelain plugins/tasks/package.json pnpm-lock.yaml` shows both
+intentional local modifications; neither is pushed, and ignored `dist/`
+remaining untracked is expected. Record the rename as the worktree's intentional
+deployment state. Before every reinstall or reload after any git operation,
+verify this still prints `bb-plugin-tasks-linear`:
+
+```bash
+node -p "require('./plugins/tasks/package.json').name"
+```
+
+A reverted rename does not fail loudly: the registration can remain
+`tasks-linear` while a rebuilt app uses the `tasks` CSS scope and renders
+incorrectly.
 
 - [ ] **Step 7: Replace and configure Tasks**
 
 Confirm builtin `tasks` remains disabled, then install
-`path:<merged-fork-checkout>/plugins/tasks`. Verify the installed ID is
+`bb plugin install --yes path:<deployment-worktree>/plugins/tasks`; the CLI
+prints its full-trust warning before proceeding. Verify the installed ID is
 `tasks-linear` while the registered CLI remains `bb tasks`. Request
 `linearApiKey` through BB's plugin secret settings UI; never pass it in CLI argv
 or chat. Reload and enable `tasks-linear`.
@@ -550,6 +570,7 @@ Confirm no upstream PR, no webhook/public share, no secret in git/logs/RPC, no
 duplicate tasks, no CLI collision with disabled builtin Tasks, and no unintended
 Linear comments or state changes. Rollback disables/removes `tasks-linear` and
 does not migrate replacement data. If the recorded builtin root is a packaged
-copy, re-enable `builtin:tasks`. If BB is running from this source checkout,
-first revert `plugins/tasks/package.json` to `bb-plugin-tasks`, run
-`pnpm install`, and only then re-enable the builtin plugin.
+copy or a different source checkout, re-enable `builtin:tasks`. Only if BB is
+running from the deployment worktree itself, first revert
+`plugins/tasks/package.json` to `bb-plugin-tasks`, run `pnpm install`, and then
+re-enable the builtin plugin.

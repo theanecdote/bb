@@ -334,6 +334,11 @@ package through the checkout's existing workspace links. The builtin Tasks
 plugin remains disabled. The replacement still registers the native `bb tasks`
 CLI command, Tasks navigation, RPC, and Tasks skill.
 
+The deployment worktree has `@bb/plugin-sdk` built before installation. BB's
+path install rebuilds the frontend bundle from source and resolves the SDK root
+through its published `dist` entry, while the package rename removes the
+Tasks-specific Turbo task that would otherwise order that build.
+
 Before installation, Tasks is made plugin-ID agnostic: backend paths use
 `bb.pluginId`, frontend attachment transport paths come from a backend RPC
 value built from that ID, and spawned-thread attribution remains host-derived
@@ -346,8 +351,11 @@ The replacement owns a separate `tasks-linear` database, KV namespace,
 settings, and secrets. Existing builtin Tasks data is not migrated. Rollback
 disables or removes `tasks-linear`; projected tasks remain in the replacement
 namespace and do not appear in builtin Tasks. In a packaged BB build,
-`builtin:tasks` is a separate copy and can then be re-enabled. In a source/dev
-build running from this fork, the builtin registry resolves to the same renamed
-`plugins/tasks` directory, so rollback also requires reverting that package
-name to `bb-plugin-tasks` and running `pnpm install`. Installation records which
-builtin root the running BB build uses before replacing the plugin.
+`builtin:tasks` is a separate copy and can then be re-enabled. In a source
+build, the builtin registry resolves `builtin:tasks` relative to the running
+server's own module directory. If that is a checkout other than the deployment
+worktree, the builtin is untouched and can be re-enabled directly. It only
+collides when BB itself runs from the deployment worktree, in which case
+rollback also requires reverting that package name to `bb-plugin-tasks` and
+running `pnpm install`. Installation records which builtin root the running BB
+build uses before replacing the plugin.
