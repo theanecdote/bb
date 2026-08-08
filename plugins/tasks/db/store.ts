@@ -757,6 +757,10 @@ export function createTasksStore(db: PluginDatabase) {
     (input: CreateTaskInput): Task => {
       const project = requireProject(input.projectId);
       const id = createOrValidateUlid(input.id);
+      const number = input.number ?? project.nextTaskNumber;
+      if (!Number.isSafeInteger(number) || number < 1) {
+        throw new Error("Task number must be a positive safe integer");
+      }
       const status = input.status ?? "backlog";
       const parentTaskId = input.parentTaskId ?? null;
       validateTaskParent(project.id, parentTaskId, id);
@@ -770,16 +774,20 @@ export function createTasksStore(db: PluginDatabase) {
           )
           .get(project.id, status)?.position ?? POSITION_STEP;
       const createdAt = nowIso();
+      const nextTaskNumber =
+        input.number === undefined
+          ? project.nextTaskNumber + 1
+          : Math.max(project.nextTaskNumber, number + 1);
 
       const allocated = db
-        .prepare<[string, number]>(
+        .prepare<[number, string, number]>(
           `
         UPDATE projects
-        SET next_task_number = next_task_number + 1
+        SET next_task_number = ?
         WHERE id = ? AND next_task_number = ?
       `,
         )
-        .run(project.id, project.nextTaskNumber);
+        .run(nextTaskNumber, project.id, project.nextTaskNumber);
       if (allocated.changes !== 1) {
         throw new Error(
           `Could not allocate the next task number for ${project.id}`,
@@ -811,7 +819,7 @@ export function createTasksStore(db: PluginDatabase) {
       ).run(
         id,
         project.id,
-        project.nextTaskNumber,
+        number,
         requireNonEmpty(input.title, "Task title"),
         input.description ?? "",
         status,
@@ -1141,6 +1149,40 @@ export function createTasksStore(db: PluginDatabase) {
 
   function updateTask(id: string, input: UpdateTaskInput): Task {
     return updateTaskTransaction(id, input);
+  }
+
+  function updateTaskIfChanged(
+    id: string,
+    input: UpdateTaskInput,
+  ): { task: Task; changed: boolean } {
+    const current = requireTask(id);
+    const normalized = {
+      title:
+        input.title === undefined
+          ? current.title
+          : requireNonEmpty(input.title, "Task title"),
+      description: input.description ?? current.description,
+      status: input.status ?? current.status,
+      priority: input.priority ?? current.priority,
+      dueDate:
+        input.dueDate === undefined
+          ? current.dueDate
+          : validateDueDate(input.dueDate),
+      parentTaskId:
+        input.parentTaskId === undefined
+          ? current.parentTaskId
+          : input.parentTaskId,
+    };
+    const changed =
+      normalized.title !== current.title ||
+      normalized.description !== current.description ||
+      normalized.status !== current.status ||
+      normalized.priority !== current.priority ||
+      normalized.dueDate !== current.dueDate ||
+      normalized.parentTaskId !== current.parentTaskId;
+    return changed
+      ? { task: updateTask(id, normalized), changed: true }
+      : { task: current, changed: false };
   }
 
   function renormalizeColumn(
@@ -1825,6 +1867,7 @@ export function createTasksStore(db: PluginDatabase) {
     listSubtasks,
     getSubtaskDoneCounts,
     updateTask,
+    updateTaskIfChanged,
     updatePosition,
     deleteTask,
     createLabel,
