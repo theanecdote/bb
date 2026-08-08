@@ -5,6 +5,7 @@ import {
 } from "@bb/agent-providers";
 import type { ComponentType } from "react";
 import { createElement, useState } from "react";
+import { AmpIcon } from "@/components/icons/AmpIcon";
 import { ClaudeIcon } from "@/components/icons/ClaudeIcon";
 import { CursorIcon } from "@/components/icons/CursorIcon";
 import { GrokIcon } from "@/components/icons/GrokIcon";
@@ -32,6 +33,7 @@ const KNOWN_ACP_BRAND_ICONS: Record<
   string,
   ComponentType<{ className?: string }>
 > = {
+  amp: AmpIcon,
   grok: GrokIcon,
   "hermes-agent": HermesAgentIcon,
   opencode: OpencodeIcon,
