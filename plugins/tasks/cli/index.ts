@@ -50,6 +50,7 @@ import {
 import { bytes, detail, json, table } from "./format";
 import { seedDemo } from "./seed";
 import type { LinearRuntime } from "../linear";
+import type { LinearMutationBridge } from "../linear/mutations";
 
 const ULID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
 const TASK_KEY_PATTERN = /^([A-Z][A-Z0-9]{0,9})-(\d+)$/;
@@ -1309,6 +1310,7 @@ async function runComment(
   domain: TasksDomain,
   ctx: PluginCliContext,
   argv: string[],
+  mutations: LinearMutationBridge,
 ): Promise<string> {
   const args = parseArgs(argv);
   if (args.flags.has("help")) return COMMENT_HELP;
@@ -1344,7 +1346,8 @@ async function runComment(
     threadId: ctx.threadId ?? null,
     body,
     notify: args.flags.has("notify"),
-  });
+    mutationOrigin: "cli",
+  }, mutations);
   return args.flags.has("json")
     ? json({ comment })
     : `Commented on ${task.key}  ${comment.id}`;
@@ -1432,6 +1435,7 @@ async function runAttachment(
   domain: TasksDomain,
   ctx: PluginCliContext,
   argv: string[],
+  mutations: LinearMutationBridge,
 ): Promise<string> {
   const [action, ...rest] = argv;
   if (!action || action === "--help") return ATTACHMENT_HELP;
@@ -1457,6 +1461,7 @@ async function runAttachment(
     const owner = comment
       ? { commentId: comment.id }
       : { taskId: (await resolveTask(domain, ownerAddress!)).id };
+    mutations.assertAttachmentAllowed(comment?.taskId ?? owner.taskId!);
     const clientHostId = await resolveClientHostId(bb, domain, args, ctx);
     const bytes = await readAttachmentSource(bb, clientHostId, sourcePath);
     const attachment = await saveAttachmentFromBytes(store.tasks, bytes, {
@@ -1765,6 +1770,7 @@ async function runDispatch(
   store: TasksApiStore,
   domain: TasksDomain,
   argv: string[],
+  mutations: LinearMutationBridge,
 ): Promise<string> {
   const args = parseArgs(argv);
   if (args.flags.has("help")) return DISPATCH_HELP;
@@ -1776,7 +1782,7 @@ async function runDispatch(
     requireOption(args, "preset"),
   );
   const result = delegationRpcContract.delegate.output.parse(
-    await delegationHandlers(bb, store).delegate(
+    await delegationHandlers(bb, store, mutations).delegate(
       delegationRpcContract.delegate.input.parse({
         taskId: task.id,
         presetId: preset.id,
@@ -1878,10 +1884,11 @@ export function registerTasksCli(
   store: TasksApiStore,
   status: PluginStatus,
   linear: LinearRuntime,
+  mutations: LinearMutationBridge,
+  domain: TasksDomain,
 ): void {
   // Use the RPC service handlers here as well so CLI and UI behavior cannot
   // drift (including safe error mapping and single-flight synchronization).
-  const domain = registerHandlers(bb, store, undefined, linear);
   bb.cli.register({
     name: "tasks",
     summary:
@@ -2048,13 +2055,13 @@ export function registerTasksCli(
             stdout = await runUpdate(bb, domain, ctx, rest);
             break;
           case "comment":
-            stdout = await runComment(bb, store, domain, ctx, rest);
+            stdout = await runComment(bb, store, domain, ctx, rest, mutations);
             break;
           case "label":
             stdout = await runLabel(domain, rest);
             break;
           case "attachment":
-            stdout = await runAttachment(bb, store, domain, ctx, rest);
+            stdout = await runAttachment(bb, store, domain, ctx, rest, mutations);
             break;
           case "preset":
             stdout = await runPreset(domain, rest);
@@ -2062,7 +2069,7 @@ export function registerTasksCli(
           case "dispatch":
           // Hidden alias kept for compatibility; help advertises "dispatch".
           case "delegate":
-            stdout = await runDispatch(bb, store, domain, rest);
+            stdout = await runDispatch(bb, store, domain, rest, mutations);
             break;
           case "attach":
             stdout = await runAttach(bb, store, domain, ctx, rest);

@@ -477,6 +477,7 @@ interface CreateCommentInput {
   threadId: string | null;
   body: string;
   notify: boolean;
+  mutationOrigin?: "cli";
 }
 
 export async function createComment(
@@ -486,8 +487,12 @@ export async function createComment(
   mutations?: LinearMutationBridge,
 ): Promise<StoredComment> {
   const prepared =
-    input.kind === "user" && mutations
-      ? await mutations.prepareUserComment(input.taskId, input.body, "user")
+    mutations && (input.kind === "user" || input.mutationOrigin === "cli")
+      ? await mutations.prepareUserComment(
+          input.taskId,
+          input.body,
+          input.mutationOrigin ?? "user",
+        )
       : undefined;
   let comment = store.transaction(
     () =>
@@ -732,6 +737,12 @@ export function registerHandlers(
     },
     renameProjectPrefix(input) {
       try {
+        if (mutations?.isMappedProject(input.projectId)) {
+          fail(
+            "linear_project_readonly",
+            "Linear project prefixes are managed by Linear",
+          );
+        }
         if (store.projectPrefixExists(input.prefix, input.projectId)) {
           fail(
             "project_prefix_conflict",
@@ -778,7 +789,7 @@ export function registerHandlers(
       try {
         if (mutations?.isMappedProject(input.projectId)) {
           fail(
-            "mapped_project_import_only",
+            "linear_project_readonly",
             "Tasks in this Linear project can only be created by import",
           );
         }
@@ -1045,6 +1056,7 @@ export function registerHandlers(
           input.attachmentId,
           {
             removeDescriptionReferences: input.removeDescriptionReferences,
+            mutations,
           },
         );
         return attachment
@@ -1201,6 +1213,8 @@ export function registerTasksApi(
   store: TasksApiStore,
   mutations?: LinearMutationBridge,
   linear?: { status(): Promise<LinearSyncStatus & { configured: boolean }>; sync(): Promise<LinearSyncResult> },
-): void {
-  bb.rpc.register(tasksRpcContract, registerHandlers(bb, store, mutations, linear));
+): ReturnType<typeof registerHandlers> {
+  const handlers = registerHandlers(bb, store, mutations, linear);
+  bb.rpc.register(tasksRpcContract, handlers);
+  return handlers;
 }

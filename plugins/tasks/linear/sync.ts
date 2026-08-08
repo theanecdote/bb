@@ -125,6 +125,13 @@ export function createLinearSyncService(deps: LinearSyncDependencies): LinearSyn
         throw new LinearMappingError(`Tasks project prefix ${team.key} is already in use`);
       if (mapped && !deps.store.tasks.getProject(mapped.projectId))
         throw new LinearMappingError(`Mapped Tasks project for Linear team ${team.key} is missing`);
+      const mappedProject = mapped
+        ? deps.store.tasks.getProject(mapped.projectId)
+        : undefined;
+      if (mapped && mappedProject && mappedProject.prefix !== mapped.teamKey)
+        throw new LinearMappingError(
+          `Mapped Tasks project prefix ${mappedProject.prefix} differs from Linear team key ${mapped.teamKey}`,
+        );
     }
   }
 
@@ -155,9 +162,18 @@ export function createLinearSyncService(deps: LinearSyncDependencies): LinearSyn
             mapping = deps.mappings.upsertTeamMapping({ linearTeamId: team.id, projectId: project.id, teamKey: team.key, teamName: team.name });
             changedProjects.push(project.id);
             createdProjects++;
-          } else if (mapping.teamKey !== team.key || mapping.teamName !== team.name) {
+          } else if (mapping.teamKey !== team.key) {
             // Prefix changes are deliberately not silently applied; validation guarantees the current key is free.
             throw new LinearMappingError(`Linear team ${team.name} changed its key; remapping is required`);
+          } else if (mapping.teamName !== team.name) {
+            deps.store.tasks.updateProject(mapping.projectId, { name: team.name });
+            deps.mappings.upsertTeamMapping({
+              linearTeamId: team.id,
+              projectId: mapping.projectId,
+              teamKey: team.key,
+              teamName: team.name,
+            });
+            changedProjects.push(mapping.projectId);
           }
         }
 

@@ -59,6 +59,29 @@ describe("Linear projection and reconciliation", () => {
     expect(h.store.tasks.listProjects()).toHaveLength(0);
   });
 
+  it("rejects local prefix drift but adopts a remote team name change", async () => {
+    const active = [issue()];
+    const h = setup(active);
+    expect((await h.service.sync()).ok).toBe(true);
+    const project = h.store.tasks.listProjects()[0]!;
+
+    h.store.tasks.updateProject(project.id, { prefix: "LOCAL" });
+    await expect(h.service.sync()).resolves.toMatchObject({
+      ok: false,
+      error: { code: "LINEAR_MAPPING_ERROR" },
+    });
+
+    h.store.tasks.updateProject(project.id, { prefix: "PER" });
+    active[0] = issue({
+      team: { id: "team-per", key: "PER", name: "People Operations" },
+    });
+    expect((await h.service.sync()).ok).toBe(true);
+    expect(h.store.tasks.getProject(project.id)?.name).toBe("People Operations");
+    expect(h.mappings.getTeamMapping("team-per")?.teamName).toBe(
+      "People Operations",
+    );
+  });
+
   it("preserves in_review for an unchanged state id and replaces it when state id changes", async () => {
     const active = [issue()];
     const h = setup(active);

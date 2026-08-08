@@ -40,9 +40,16 @@ export default async function plugin(bb: BbPluginApi) {
   );
   mappings = createLinearMappingStore(bb.storage.database());
   const linear = registerLinearIntegration(bb, store, mappings);
-  registerTasksApi(bb, store, linear.mutations, linear);
+  const domain = registerTasksApi(bb, store, linear.mutations, linear);
   registerAttachments(bb, store.tasks, { mutations: linear.mutations });
-  registerTasksCli(bb, store, statusPayload(), linear);
+  registerTasksCli(
+    bb,
+    store,
+    statusPayload(),
+    linear,
+    linear.mutations,
+    domain,
+  );
   registerDelegation(bb, store, linear.mutations);
   registerMentions(bb, store);
   await registerLifecycle(bb, store);
