@@ -16,7 +16,7 @@ second task-management surface.
 - Import every incomplete issue assigned to the authenticated Linear user.
 - Keep one durable Linear issue to BB task mapping and prevent duplicates.
 - Refresh Linear-owned fields through manual and periodic synchronization.
-- Write supported BB user actions back to the same Linear issue.
+- Write every supported BB task edit back to the same Linear issue.
 - Preserve the existing Tasks UI and delegation behavior.
 - Keep the Linear credential in BB plugin secret storage.
 - Install the modified Tasks plugin from the user's personal BB fork only.
@@ -29,7 +29,7 @@ second task-management surface.
 - Sending agent or system execution comments to Linear.
 - Linear OAuth application registration.
 - Real-time webhooks in the initial release.
-- Synchronizing attachments, projects, cycles, labels, estimates, or relations.
+- Synchronizing attachments, cycles, labels, estimates, relations, or sub-tasks.
 - Changing Linear repository integrations or GitHub automation.
 
 ## Architecture
@@ -39,20 +39,23 @@ keeps task mutation, mapping persistence, realtime invalidation, and frontend
 state under one transaction boundary and avoids introducing a private
 cross-plugin API.
 
-The module has four units:
+The module has three units:
 
 1. `LinearClient` sends bounded GraphQL requests, validates HTTP and GraphQL
    responses, paginates assigned issues, and performs issue-state and comment
    mutations.
-2. `LinearMappingStore` owns the Linear issue to BB task mapping and sync
-   metadata in the Tasks plugin database.
-3. `LinearSyncService` resolves the viewer, fetches incomplete assigned issues,
-   maps their fields, and upserts BB projects and tasks transactionally.
-4. Tasks UI additions show connection and sync state and provide `Sync now`.
+2. `LinearSyncService` owns the prepared mapping statements, resolves the
+   viewer, fetches incomplete assigned issues, and upserts BB projects and
+   tasks transactionally.
+3. Tasks UI additions show connection and sync state and provide `Sync now`.
 
-The existing Tasks store remains the only writer of task domain rows. Linear
-integration code calls store methods rather than issuing ad hoc writes to Tasks
-tables.
+The existing Tasks store remains the only writer of task domain rows. Every
+task status and editable-field mutation, including board moves, CLI updates,
+delegation transitions, and attachment-related description behavior, must pass
+through a shared domain mutation boundary. Linear integration code calls that
+boundary rather than issuing ad hoc writes to Tasks tables. Tests enforce this
+invariant for the known direct-write paths in `api`, `delegate`, and
+`attachments`.
 
 ## Configuration and Authentication
 
@@ -82,8 +85,17 @@ unexpected.
 
 An imported issue belongs to a BB Tasks project representing its Linear team.
 The mapping store identifies these projects by Linear team ID; names alone are
-not identities. Project prefixes are derived from the team key and made unique
-through the existing Tasks prefix validation rules.
+not identities. The Tasks project uses the Linear team key as its prefix and
+the Linear identifier number as the task number, so `PER-2165` remains
+`PER-2165` in BB. `next_task_number` is advanced above the greatest imported
+number so later local tasks do not collide.
+
+If the Linear team key is already owned by an unmapped Tasks project, sync
+stops for that team with `LINEAR_MAPPING_ERROR`; it never silently adopts or
+renames the project. The user must rename the conflicting project before
+retrying. An imported project starts with `linkedBbProjectId = null`. The
+existing Manage surface is used to link it to a BB repository project;
+delegation remains explicitly unavailable until that link is configured.
 
 ## Field Mapping
 
@@ -92,9 +104,9 @@ Linear-owned fields refresh on every successful sync:
 | Linear | BB Tasks |
 | --- | --- |
 | issue ID | mapping identity |
-| identifier | source metadata and task description |
+| identifier | BB task key |
 | title | title |
-| description | description, followed by canonical Linear URL |
+| description | description |
 | priority 1/2/3/4/0 | urgent/high/medium/low/none |
 | due date | due date |
 | workflow type backlog | backlog |
@@ -103,22 +115,29 @@ Linear-owned fields refresh on every successful sync:
 | workflow type completed | done |
 | workflow type canceled | canceled |
 
-Linear has no portable `in_review` workflow type. During inbound sync, any
-started Linear state maps to `in_progress`. During outbound status mutation,
-`in_review` maps to a team state named `In Review` when one exists; otherwise it
-falls back to the team's first started state.
+Linear has no portable `in_review` workflow type. Each mapping stores the exact
+`linear_state_id` last observed. Inbound sync only overwrites the BB status when
+that state ID changed. Therefore a local `in_review` remains intact while the
+corresponding Linear started state is unchanged. During outbound status
+mutation, `in_review` maps to a case-insensitive team state named `In Review`
+when one exists; otherwise it uses the team's first started state and stores
+that selected state ID.
 
-Linear descriptions are stored as Markdown. The integration appends a small
-source section containing the issue identifier and URL. It does not copy the
-Linear comment transcript.
+Linear descriptions are stored as Markdown. Source identity and URL live in
+the mapping/API projection rather than being appended to the description. The
+integration does not copy the Linear comment transcript.
 
 ## Durable Mapping
 
-The Tasks database gains append-only migrations for:
+The Tasks database gains one append-only entry in the existing
+`plugins/tasks/db/schema.ts` `MIGRATIONS` array. Its array index plus one is the
+schema version; the integration does not introduce a second migration system.
+The migration adds:
 
 - one row per Linear team project mapping;
 - one row per Linear issue task mapping;
-- the Linear `updatedAt` value last applied;
+- the Linear state ID and `updatedAt` value last applied;
+- an active/inactive mapping marker;
 - the last successful sync time and last typed sync error.
 
 Linear issue ID is unique, as is the mapped BB task ID. Upsert is idempotent.
@@ -126,23 +145,30 @@ Deleting a BB task removes its mapping through a foreign-key cascade; a later
 sync may import the still-assigned incomplete Linear issue again.
 
 When a previously mapped issue is no longer in the active result set, the sync
-performs a targeted lookup before changing local state. Completed and canceled
-issues become `done` and `canceled`. Unassigned or archived issues become
-`canceled` locally while retaining their mapping. Transient pagination or API
-failure never causes mass cancellation.
+re-queries all missing mapped IDs in bounded batches. Completed and canceled
+issues become `done` and `canceled`. Unassigned or archived issues only mark
+the mapping inactive; their BB task status, comments, and attached threads are
+preserved. Transient pagination, partial GraphQL data, or API failure never
+causes mass inactivation or status changes.
+
+Sync compares all projected values before calling `updateTask`. Rows with no
+actual field change are not updated. This preserves the Tasks list revision and
+keeps existing pagination cursors valid across no-op five-minute syncs.
 
 ## Outbound Mutations
 
-Only explicit user actions write to Linear:
+Every supported mutation of a mapped task writes to Linear first:
 
-- A user changing the status of a mapped BB task updates the Linear issue's
-  workflow state.
+- Status changes from the UI, board move, CLI, delegation, or agent completion
+  update the Linear issue's workflow state.
+- Title, description, priority, and due-date changes update the Linear issue.
 - A BB comment with kind `user` on a mapped task creates a Linear comment.
 
-Agent and system comments remain BB-local. Title, description, priority, and
-due-date edits are read-only projections in the initial release; a subsequent
-sync restores Linear values. The UI identifies mapped tasks as Linear-owned so
-this behavior is not surprising.
+Agent and system comments remain BB-local. CLI comments use the existing
+`kind = user` behavior and therefore write to Linear. Labels and sub-tasks stay
+BB-local. Attachments on mapped tasks are rejected in the initial release
+because the current attachment path embeds BB-local references into the task
+description; silent creation of inaccessible Linear links is not acceptable.
 
 Outbound operations call Linear first. BB applies the requested local mutation
 only after Linear confirms success. This avoids displaying a local state that
@@ -157,10 +183,11 @@ Synchronization runs:
 - every five minutes while the plugin is running; and
 - on explicit `Sync now` from the Tasks UI.
 
-Only one sync may run at a time. Concurrent requests join or receive the same
-result rather than starting duplicate fetches. The service uses request
-timeouts, bounded pagination, and no autonomous retry loop. The next scheduled
-or manual sync is the retry mechanism.
+Only one sync may run at a time. The background service follows the existing
+GitHub plugin pattern: initial sync followed by abort-aware five-minute sleeps.
+Concurrent manual/background requests share the same in-flight promise. The
+service uses request timeouts, bounded pagination, and no autonomous retry
+loop. The next scheduled or manual sync is the retry mechanism.
 
 The initial release uses polling because Linear webhooks require a public HTTPS
 receiver and workspace-admin or OAuth application setup. No exe.dev public
@@ -184,13 +211,13 @@ The plugin does not add a second issue list or duplicate the Linear transcript.
 
 Backend errors use a small stable set:
 
-- `LINEAR_NOT_CONFIGURED`
-- `LINEAR_UNAUTHORIZED`
 - `LINEAR_RATE_LIMITED`
 - `LINEAR_API_ERROR`
-- `LINEAR_INVALID_RESPONSE`
-- `LINEAR_TIMEOUT`
 - `LINEAR_MAPPING_ERROR`
+
+Missing or rejected credentials use `bb.status.needsConfiguration` and a safe
+status message rather than adding frontend-only error variants. Invalid
+responses and timeouts are reported as `LINEAR_API_ERROR` with safe messages.
 
 GraphQL responses containing an `errors` array are failures even when HTTP
 status is 200. Internal logs include operation names, status codes, and issue
@@ -212,8 +239,16 @@ Unit and plugin-host tests cover:
 - field and workflow-state mapping;
 - idempotent imports and refreshes;
 - completed, canceled, unassigned, and archived reconciliation;
-- prevention of mass cancellation after partial or failed fetches;
-- outbound status and user-comment mutations;
+- prevention of mass inactivation after partial or failed fetches;
+- outbound status and editable-field mutations from UI, board, CLI,
+  delegation, and agent completion paths;
+- exact Linear key preservation and prefix-conflict refusal;
+- `linear_state_id` merge behavior preserving local `in_review`;
+- no-op sync preserving the task-list revision;
+- inactive mappings preserving local task state;
+- delegation refusal until the imported project is linked to a BB project;
+- mapped-task attachment refusal;
+- outbound user-comment mutations, including CLI comments;
 - suppression of agent and system comment write-back;
 - unauthorized, rate-limited, malformed, partial GraphQL, and timeout errors;
 - single-flight manual and scheduled synchronization;
@@ -233,6 +268,7 @@ After merge, a distribution branch containing the built Tasks plugin artifacts
 is created in the same personal fork. The currently disabled builtin Tasks
 plugin is replaced with that managed git plugin, configured through BB's secret
 setting, enabled, reloaded, and smoke-tested. Rollback removes the managed
-plugin and reinstalls `builtin:tasks`; Linear data remains isolated to the
-managed plugin's own database and secret storage.
-
+plugin and reinstalls `builtin:tasks`. BB removal preserves same-id plugin KV
+and `data.db`, so task and Linear mapping rows survive reinstall; plugin
+settings and secret files are intentionally removed and the Linear API key must
+be configured again when returning to the managed build.
