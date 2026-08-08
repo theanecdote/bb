@@ -389,14 +389,17 @@ export function CommentComposer({
     setError(null);
     const text = body.trim();
     try {
-      const comment: Comment = (
-        await rpc.call("createComment", {
-          taskId,
-          body: text,
-          notify: notify && notificationTarget.kind === "ready",
-          allowEmptyBody: text.length === 0,
-        })
-      ).comment;
+      const result = await rpc.call("createComment", {
+        taskId,
+        body: text,
+        notify: notify && notificationTarget.kind === "ready",
+        allowEmptyBody: text.length === 0,
+      });
+      if (!result.ok) {
+        setError(result.error.message);
+        return;
+      }
+      const comment: Comment = result.comment;
       // The comment is now posted — clear the text so a later upload failure
       // can't double-post it. Failed uploads stay behind as retryable chips.
       setBody("");

@@ -396,6 +396,12 @@ export function handlers(
           });
         } catch (error) {
           if (!(error instanceof LinearMutationError)) throw error;
+          mutations?.recordSyncDiagnostic(
+            error.code === "linear_rate_limited"
+              ? "LINEAR_RATE_LIMITED"
+              : "LINEAR_MAPPING_ERROR",
+            "A delegated thread was attached, but its mapped Linear status could not be updated. Reconcile the mapping and retry synchronization.",
+          );
           bb.log.warn(
             `Delegated ${task.key}, but Linear rejected its status transition`,
           );

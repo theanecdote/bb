@@ -6,6 +6,7 @@ import {
 } from "../views/manage/shared.js";
 import type { LinearMappingStore } from "./store.js";
 import type { LinearClient, LinearIssue } from "./types.js";
+import { LinearRequestCanceled } from "./client.js";
 
 export type LinearSyncErrorCode =
   | "LINEAR_MAPPING_ERROR"
@@ -22,14 +23,19 @@ export interface LinearSyncStatus {
   lastError: { code: LinearSyncErrorCode; message: string } | null;
 }
 
-export interface LinearSyncResult {
-  ok: boolean;
+interface LinearSyncCounts {
   createdProjects: number;
   createdTasks: number;
   updatedTasks: number;
   deactivatedTasks: number;
-  error?: { code: LinearSyncErrorCode; message: string };
 }
+
+export type LinearSyncResult =
+  | (LinearSyncCounts & { ok: true })
+  | (LinearSyncCounts & {
+      ok: false;
+      error: { code: LinearSyncErrorCode; message: string };
+    });
 
 export interface LinearSyncService {
   sync(signal?: AbortSignal): Promise<LinearSyncResult>;
@@ -346,6 +352,7 @@ export function createLinearSyncService(
         deactivatedTasks,
       };
     } catch (cause) {
+      if (cause instanceof LinearRequestCanceled) throw cause;
       credentialsRejected =
         typeof cause === "object" &&
         cause !== null &&
@@ -362,8 +369,10 @@ export function createLinearSyncService(
           lastErrorCode: error.code,
           retryAt:
             error.code === "LINEAR_RATE_LIMITED" &&
-            typeof cause === "object" && cause !== null && "retryAt" in cause
-              ? (cause as { retryAt?: Date }).retryAt?.toISOString() ?? null
+            typeof cause === "object" &&
+            cause !== null &&
+            "retryAt" in cause
+              ? ((cause as { retryAt?: Date }).retryAt?.toISOString() ?? null)
               : null,
         }),
       );
@@ -400,7 +409,10 @@ export function createLinearSyncService(
         lastError:
           volatileError ??
           (state.lastError
-            ? { code: state.lastErrorCode ?? "LINEAR_API_ERROR", message: state.lastError }
+            ? {
+                code: state.lastErrorCode ?? "LINEAR_API_ERROR",
+                message: state.lastError,
+              }
             : null),
       };
     },

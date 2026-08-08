@@ -1345,7 +1345,7 @@ async function runComment(
   if (body === undefined)
     throw new CliError("missing required --body or --body-file");
   if (!body.trim()) throw new CliError("comment body must not be blank");
-  const comment = await createComment(
+  const result = await createComment(
     bb,
     store,
     {
@@ -1359,6 +1359,11 @@ async function runComment(
     },
     mutations,
   );
+  if (!result.ok) {
+    if (args.flags.has("json")) return json(result);
+    throw new CliError(result.error.message);
+  }
+  const comment = result.comment;
   return args.flags.has("json")
     ? json({ comment })
     : `Commented on ${task.key}  ${comment.id}`;
@@ -2045,7 +2050,7 @@ export function registerTasksCli(
                     ["Deactivated tasks", result.deactivatedTasks],
                     [
                       "Error",
-                      result.error
+                      !result.ok
                         ? `${result.error.code}: ${result.error.message}`
                         : "-",
                     ],

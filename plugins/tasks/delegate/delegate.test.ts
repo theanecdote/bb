@@ -2,9 +2,13 @@ import {
   createFakePluginHost,
   makeThreadResponse,
 } from "@bb/plugin-sdk/testing";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createStore } from "../api";
 import type { Comment, Project, Task } from "../db";
+import { LinearApiError } from "../linear/client";
+import { createLinearMutationBridge } from "../linear/mutations";
+import { createLinearMappingStore } from "../linear/store";
+import type { LinearClient } from "../linear/types";
 import { delegationRpcContract } from "./contract";
 import { buildSeedPrompt, registerDelegation } from ".";
 
@@ -31,6 +35,78 @@ function createTestPreset(
 }
 
 describe("task delegation", () => {
+  it("persists a safe diagnostic when mapped status transition is rejected after attach", async () => {
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "tasks-linear",
+      sdk: {
+        threads: {
+          spawn: async () => ({ id: "thr_mapped" }),
+          get: async () =>
+            makeThreadResponse({ id: "thr_mapped", status: "starting" }),
+        },
+      },
+    });
+    const store = createStore(bb);
+    const mappings = createLinearMappingStore(bb.storage.database());
+    const project = store.tasks.createProject({
+      name: "Mapped",
+      prefix: "MAP",
+      color: "blue",
+      linkedBbProjectId: "proj_bb",
+    });
+    const task = store.tasks.createTask({
+      projectId: project.id,
+      title: "Delegate mapped",
+      status: "todo",
+    });
+    mappings.upsertTeamMapping({
+      linearTeamId: "team-1",
+      projectId: project.id,
+      teamKey: "MAP",
+      teamName: "Mapped",
+    });
+    mappings.upsertIssueMapping({
+      linearIssueId: "issue-1",
+      taskId: task.id,
+      linearTeamId: "team-1",
+      identifier: "MAP-1",
+      url: "https://linear.app/acme/issue/MAP-1",
+      linearStateId: "todo",
+      linearUpdatedAt: "2026-08-08T00:00:00.000Z",
+      active: true,
+    });
+    const client: LinearClient = {
+      viewerAssignedIssues: vi.fn(),
+      issuesByIds: vi.fn(),
+      createComment: vi.fn(),
+      teamStates: vi.fn(async () => [
+        { id: "started", name: "Started", type: "started", position: 1 },
+      ]),
+      updateIssue: vi.fn(async () => {
+        throw new LinearApiError("LINEAR_API_ERROR", "unsafe remote detail");
+      }),
+    };
+    const mutations = createLinearMutationBridge({ client, mappings });
+    registerDelegation(bb, store, mutations);
+    const preset = createTestPreset(store);
+
+    await harness.callRpc("delegate", { taskId: task.id, presetId: preset.id });
+
+    expect(store.tasks.getTask(task.id)?.status).toBe("todo");
+    expect(store.tasks.listTaskThreads(task.id)).toEqual([
+      expect.objectContaining({ threadId: "thr_mapped" }),
+    ]);
+    expect(mappings.getSyncState()).toMatchObject({
+      lastErrorCode: "LINEAR_MAPPING_ERROR",
+      lastError:
+        "A delegated thread was attached, but its mapped Linear status could not be updated. Reconcile the mapping and retry synchronization.",
+    });
+    expect(mappings.getSyncState().lastError).not.toContain(
+      "unsafe remote detail",
+    );
+    await harness.dispose();
+  });
+
   it("spawns from a preset, attaches the thread, advances status, comments, and invalidates", async () => {
     const { bb, harness } = createFakePluginHost({
       pluginId: "tasks-linear",

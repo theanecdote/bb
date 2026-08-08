@@ -489,49 +489,81 @@ export async function createComment(
   store: TasksApiStore,
   input: CreateCommentInput,
   mutations?: LinearMutationBridge,
-): Promise<StoredComment> {
-  const prepared =
-    mutations && input.kind === "user"
-      ? await mutations.prepareUserComment(input.taskId, input.body, "user")
-      : undefined;
-  let comment = store.transaction(
-    () =>
-      prepared?.commit(store.tasks, {
-        taskId: input.taskId,
-        kind: input.kind,
-        authorName: input.authorName,
-        presetName: input.presetName,
-        threadId: input.threadId,
-        body: input.body,
-        notifiedCount: 0,
-      }) ??
-      store.tasks.createComment({
-        taskId: input.taskId,
-        kind: input.kind,
-        authorName: input.authorName,
-        presetName: input.presetName,
-        threadId: input.threadId,
-        body: input.body,
-        notifiedCount: 0,
-      }),
-  );
-
-  if (input.notify) {
-    const delivery = await deliverCommentToLatestAgent(bb, store.tasks, {
-      taskId: comment.taskId,
-      commentId: comment.id,
-      body: comment.body,
-      authorName: comment.authorName,
-    });
-    comment = store.transaction(() =>
-      store.tasks.updateComment(comment.id, {
-        notifiedCount: delivery.notifiedCount,
-      }),
+): Promise<
+  | { ok: true; comment: StoredComment }
+  | {
+      ok: false;
+      error: {
+        code:
+          | "linear_write_failed"
+          | "linear_rate_limited"
+          | "mapped_attachment_forbidden";
+        message: string;
+        retryAt?: string;
+      };
+    }
+> {
+  try {
+    const prepared =
+      mutations && input.kind === "user"
+        ? await mutations.prepareUserComment(input.taskId, input.body, "user")
+        : undefined;
+    let comment = store.transaction(
+      () =>
+        prepared?.commit(store.tasks, {
+          taskId: input.taskId,
+          kind: input.kind,
+          authorName: input.authorName,
+          presetName: input.presetName,
+          threadId: input.threadId,
+          body: input.body,
+          notifiedCount: 0,
+        }) ??
+        store.tasks.createComment({
+          taskId: input.taskId,
+          kind: input.kind,
+          authorName: input.authorName,
+          presetName: input.presetName,
+          threadId: input.threadId,
+          body: input.body,
+          notifiedCount: 0,
+        }),
     );
-  }
 
-  publishCommentsChanged(bb, input.taskId, comment.notifiedCount);
-  return comment;
+    if (input.notify) {
+      const delivery = await deliverCommentToLatestAgent(bb, store.tasks, {
+        taskId: comment.taskId,
+        commentId: comment.id,
+        body: comment.body,
+        authorName: comment.authorName,
+      });
+      comment = store.transaction(() =>
+        store.tasks.updateComment(comment.id, {
+          notifiedCount: delivery.notifiedCount,
+        }),
+      );
+    }
+
+    publishCommentsChanged(bb, input.taskId, comment.notifiedCount);
+    return { ok: true, comment };
+  } catch (error) {
+    if (
+      error instanceof LinearMutationError ||
+      error instanceof LinearAttachmentError
+    ) {
+      return {
+        ok: false,
+        error: {
+          code: error.code,
+          message: error.message,
+          ...(error instanceof LinearMutationError && error.retryAt
+            ? { retryAt: error.retryAt }
+            : {}),
+        },
+      };
+    }
+    throw error;
+  }
 }
 
 interface TaskPullRequestsResult {
@@ -1015,7 +1047,7 @@ export function registerHandlers(
       return { labels: store.tasks.listLabels(input.projectId) };
     },
     async createComment(input) {
-      const comment = await createComment(
+      return createComment(
         bb,
         store,
         {
@@ -1029,7 +1061,6 @@ export function registerHandlers(
         },
         mutations,
       );
-      return { comment };
     },
     async listComments(input) {
       const comments = store.tasks.listComments(input.taskId);

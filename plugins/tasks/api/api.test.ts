@@ -6,10 +6,81 @@ import {
 } from "@bb/plugin-sdk/testing";
 import { describe, expect, it, vi } from "vitest";
 import { buildAttachmentUrl, registerAttachments } from "../attachments";
+import { LinearApiError } from "../linear/client";
+import { createLinearMutationBridge } from "../linear/mutations";
+import { createLinearMappingStore } from "../linear/store";
+import type { LinearClient } from "../linear/types";
 import { tasksRpcContract } from "../shared/contract";
 import { createComment, createStore, registerTasksApi } from ".";
 
 describe("Tasks RPC domain API", () => {
+  it("returns safe typed Linear comment failures over the real RPC contract", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "tasks-linear" });
+    const store = createStore(bb);
+    const mappings = createLinearMappingStore(bb.storage.database());
+    const project = store.tasks.createProject({
+      name: "Mapped",
+      prefix: "MAP",
+      color: "blue",
+    });
+    const task = store.tasks.createTask({
+      projectId: project.id,
+      title: "Comment",
+    });
+    mappings.upsertTeamMapping({
+      linearTeamId: "team",
+      projectId: project.id,
+      teamKey: "MAP",
+      teamName: "Mapped",
+    });
+    mappings.upsertIssueMapping({
+      linearIssueId: "issue",
+      taskId: task.id,
+      linearTeamId: "team",
+      identifier: "MAP-1",
+      url: "https://linear.app/acme/issue/MAP-1",
+      linearStateId: "todo",
+      linearUpdatedAt: "2026-08-08T00:00:00.000Z",
+      active: true,
+    });
+    const client: LinearClient = {
+      viewerAssignedIssues: vi.fn(),
+      issuesByIds: vi.fn(),
+      teamStates: vi.fn(),
+      updateIssue: vi.fn(),
+      createComment: vi.fn(async () => {
+        throw new LinearApiError(
+          "LINEAR_RATE_LIMITED",
+          "Linear is rate limited. Try again later.",
+          new Date("2026-08-08T13:00:00.000Z"),
+        );
+      }),
+    };
+    registerTasksApi(
+      bb,
+      store,
+      createLinearMutationBridge({ client, mappings }),
+    );
+
+    const result = tasksRpcContract.createComment.output.parse(
+      await harness.callRpc("createComment", {
+        taskId: task.id,
+        body: "Keep this draft",
+        notify: false,
+      }),
+    );
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: "linear_rate_limited",
+        message: "Linear is rate limited. Try again later.",
+        retryAt: "2026-08-08T13:00:00.000Z",
+      },
+    });
+    expect(store.tasks.listComments(task.id)).toEqual([]);
+    await harness.dispose();
+  });
+
   it("returns a typed stale-cursor result after the task-list revision changes", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
     const store = createStore(bb);
@@ -729,8 +800,11 @@ describe("Tasks RPC domain API", () => {
       notify: true,
     });
 
+    expect(quietResult.ok).toBe(true);
+    if (!quietResult.ok || !agentComment.ok)
+      throw new Error("Expected comments to succeed");
     expect(quietResult.comment.notifiedCount).toBe(0);
-    expect(agentComment.notifiedCount).toBe(0);
+    expect(agentComment.comment.notifiedCount).toBe(0);
     expect(harness.sdk.callsTo("threads.send")).toEqual([]);
     expect(harness.realtimeSignals.slice(-2)).toEqual([
       {
@@ -775,6 +849,7 @@ describe("Tasks RPC domain API", () => {
         allowEmptyBody: true,
       }),
     ).resolves.toEqual({
+      ok: true,
       comment: expect.objectContaining({
         taskId: task.id,
         body: "",

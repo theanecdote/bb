@@ -68,6 +68,10 @@ export interface LinearMutationBridge {
   assertAttachmentAllowed(taskId: string): void;
   isMappedTask(taskId: string): boolean;
   isMappedProject(projectId: string): boolean;
+  recordSyncDiagnostic(
+    code: "LINEAR_MAPPING_ERROR" | "LINEAR_RATE_LIMITED" | "LINEAR_API_ERROR",
+    message: string,
+  ): void;
 }
 
 export interface LinearClientSnapshot {
@@ -127,7 +131,7 @@ export function createLinearMutationBridge(deps: {
         let cache = stateCache.get(runtime.generation);
         if (!cache) stateCache.set(runtime.generation, (cache = new Map()));
         cache.set(teamId, { states, expiresAt: Date.now() + stateCacheMs });
-    return states;
+        return states;
       })
       .finally(() => stateFlights.get(runtime.generation)?.delete(teamId));
     let flights = stateFlights.get(runtime.generation);
@@ -266,5 +270,15 @@ export function createLinearMutationBridge(deps: {
     isMappedTask: (taskId) =>
       deps.mappings.getIssueMappingByTask(taskId) !== undefined,
     isMappedProject: (projectId) => deps.mappings.isMappedProject(projectId),
+    recordSyncDiagnostic(code, message) {
+      const previous = deps.mappings.getSyncState();
+      deps.mappings.updateSyncState({
+        ...previous,
+        lastAttemptAt: new Date().toISOString(),
+        lastError: message,
+        lastErrorCode: code,
+        retryAt: null,
+      });
+    },
   };
 }

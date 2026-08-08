@@ -304,17 +304,15 @@ async function renderComposerWithTask(options?: {
       body: string;
       notify: boolean;
     };
-    return {
-      comment: await createComment(bb, store, {
-        taskId: request.taskId,
-        kind: "user",
-        authorName: "You",
-        presetName: null,
-        threadId: null,
-        body: request.body,
-        notify: request.notify,
-      }),
-    };
+    return createComment(bb, store, {
+      taskId: request.taskId,
+      kind: "user",
+      authorName: "You",
+      presetName: null,
+      threadId: null,
+      body: request.body,
+      notify: request.notify,
+    });
   });
 
   render(

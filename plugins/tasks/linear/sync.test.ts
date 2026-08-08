@@ -4,7 +4,7 @@ import { createStore } from "../api/index.js";
 import { DEFAULT_COLOR } from "../views/manage/shared.js";
 import { createLinearMappingStore } from "./store.js";
 import { createLinearSyncService } from "./sync.js";
-import { LinearApiError } from "./client.js";
+import { LinearApiError, LinearRequestCanceled } from "./client.js";
 import type { LinearClient, LinearIssue } from "./types.js";
 
 const disposals: Array<() => Promise<void>> = [];
@@ -268,6 +268,21 @@ describe("Linear projection and reconciliation", () => {
     });
   });
 
+  it("does not persist caller cancellation as an API failure", async () => {
+    const h = setup([]);
+    vi.mocked(h.client.viewerAssignedIssues).mockRejectedValueOnce(
+      new LinearRequestCanceled(),
+    );
+    await expect(h.service.sync(AbortSignal.abort())).rejects.toBeInstanceOf(
+      LinearRequestCanceled,
+    );
+    expect(h.mappings.getSyncState()).toMatchObject({
+      lastAttemptAt: null,
+      lastError: null,
+      lastErrorCode: null,
+    });
+  });
+
   it("uses one client snapshot for the complete flight and forwards its signal", async () => {
     const h = setup([]);
     const controller = new AbortController();
@@ -278,7 +293,8 @@ describe("Linear projection and reconciliation", () => {
     vi.mocked(first.viewerAssignedIssues).mockImplementationOnce((signal) => {
       expect(signal).toBe(controller.signal);
       return new Promise((resolve) => {
-        release = () => resolve({ viewerId: "viewer", viewerName: "Viewer", issues: [] });
+        release = () =>
+          resolve({ viewerId: "viewer", viewerName: "Viewer", issues: [] });
       });
     });
     const service = createLinearSyncService({
@@ -287,7 +303,9 @@ describe("Linear projection and reconciliation", () => {
       store: h.store,
     });
     const flight = service.sync(controller.signal);
-    await vi.waitFor(() => expect(first.viewerAssignedIssues).toHaveBeenCalledOnce());
+    await vi.waitFor(() =>
+      expect(first.viewerAssignedIssues).toHaveBeenCalledOnce(),
+    );
     selected = second;
     expect(service.sync()).toBe(flight);
     release();

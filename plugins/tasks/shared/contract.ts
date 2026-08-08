@@ -468,26 +468,36 @@ export const tasksRpcContract = defineRpcContract({
   },
   linearSyncNow: {
     input: z.null(),
-    output: z
-      .object({
-        ok: z.boolean(),
-        createdProjects: z.number().int().nonnegative(),
-        createdTasks: z.number().int().nonnegative(),
-        updatedTasks: z.number().int().nonnegative(),
-        deactivatedTasks: z.number().int().nonnegative(),
-        error: z
-          .object({
-            code: z.enum([
-              "LINEAR_MAPPING_ERROR",
-              "LINEAR_RATE_LIMITED",
-              "LINEAR_API_ERROR",
-            ]),
-            message: z.string(),
-          })
-          .strict()
-          .optional(),
-      })
-      .strict(),
+    output: z.discriminatedUnion("ok", [
+      z
+        .object({
+          ok: z.literal(true),
+          createdProjects: z.number().int().nonnegative(),
+          createdTasks: z.number().int().nonnegative(),
+          updatedTasks: z.number().int().nonnegative(),
+          deactivatedTasks: z.number().int().nonnegative(),
+        })
+        .strict(),
+      z
+        .object({
+          ok: z.literal(false),
+          createdProjects: z.number().int().nonnegative(),
+          createdTasks: z.number().int().nonnegative(),
+          updatedTasks: z.number().int().nonnegative(),
+          deactivatedTasks: z.number().int().nonnegative(),
+          error: z
+            .object({
+              code: z.enum([
+                "LINEAR_MAPPING_ERROR",
+                "LINEAR_RATE_LIMITED",
+                "LINEAR_API_ERROR",
+              ]),
+              message: z.string(),
+            })
+            .strict(),
+        })
+        .strict(),
+    ]),
   },
   pluginTransport: {
     input: z.null(),
@@ -676,7 +686,25 @@ export const tasksRpcContract = defineRpcContract({
         path: ["body"],
         message: "Comment body cannot be empty",
       }),
-    output: z.object({ comment: commentSchema }).strict(),
+    output: z.discriminatedUnion("ok", [
+      z.object({ ok: z.literal(true), comment: commentSchema }).strict(),
+      z
+        .object({
+          ok: z.literal(false),
+          error: z
+            .object({
+              code: z.enum([
+                "linear_write_failed",
+                "linear_rate_limited",
+                "mapped_attachment_forbidden",
+              ]),
+              message: z.string(),
+              retryAt: z.string().optional(),
+            })
+            .strict(),
+        })
+        .strict(),
+    ]),
   },
   listComments: {
     input: z.object({ taskId: idSchema }).strict(),
