@@ -26,7 +26,7 @@ function setup(active: LinearIssue[] = [issue()]) {
   const store = createStore(bb);
   const mappings = createLinearMappingStore(bb.storage.database());
   const client: LinearClient = {
-    viewerAssignedIssues: vi.fn(async () => ({ viewerId: "viewer", issues: active })),
+    viewerAssignedIssues: vi.fn(async () => ({ viewerId: "viewer", viewerName: "Viewer", issues: active })),
     issuesByIds: vi.fn(async () => []), teamStates: vi.fn(async () => []),
     updateIssue: vi.fn(), createComment: vi.fn(),
   };
@@ -91,7 +91,7 @@ describe("Linear projection and reconciliation", () => {
   it("returns one promise for concurrent calls and records safe failures", async () => {
     const h = setup([]);
     let release!: () => void;
-    vi.mocked(h.client.viewerAssignedIssues).mockImplementationOnce(() => new Promise((resolve) => { release = () => resolve({ viewerId: "viewer", issues: [] }); }));
+    vi.mocked(h.client.viewerAssignedIssues).mockImplementationOnce(() => new Promise((resolve) => { release = () => resolve({ viewerId: "viewer", viewerName: "Viewer", issues: [] }); }));
     const first = h.service.sync(), second = h.service.sync();
     expect(first).toBe(second);
     release(); await first;

@@ -23,7 +23,7 @@ const issueSchema = z.object({
 const pageInfoSchema = z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() });
 const graphQLErrorsSchema = z.array(z.object({ message: z.string().optional() }).passthrough()).optional();
 const envelopeSchema = z.object({ errors: graphQLErrorsSchema }).passthrough();
-const assignedSchema = z.object({ data: z.object({ viewer: z.object({ id: z.string(), assignedIssues: z.object({ nodes: z.array(issueSchema), pageInfo: pageInfoSchema }) }) }) });
+const assignedSchema = z.object({ data: z.object({ viewer: z.object({ id: z.string(), name: z.string().default(""), assignedIssues: z.object({ nodes: z.array(issueSchema), pageInfo: pageInfoSchema }) }) }) });
 const issuesSchema = z.object({ data: z.object({ issues: z.object({ nodes: z.array(issueSchema) }) }) });
 const statesSchema = z.object({ data: z.object({ workflowStates: z.object({ nodes: z.array(stateSchema), pageInfo: pageInfoSchema }) }) });
 const updateSchema = z.object({ data: z.object({ issueUpdate: z.object({ success: z.literal(true), issue: issueSchema }) }) });
@@ -46,7 +46,7 @@ export interface CreateLinearClientOptions {
 
 const ISSUE_FIELDS = `id identifier title description priority dueDate url updatedAt archivedAt assignee { id } team { id key name } state { id name type position }`;
 const QUERIES = {
-  ViewerAssignedIssues: `query ViewerAssignedIssues($after: String) { viewer { id assignedIssues(first: 100, after: $after, filter: { state: { type: { nin: ["completed", "canceled"] } } }) { nodes { ${ISSUE_FIELDS} } pageInfo { hasNextPage endCursor } } } }`,
+  ViewerAssignedIssues: `query ViewerAssignedIssues($after: String) { viewer { id name assignedIssues(first: 100, after: $after, filter: { state: { type: { nin: ["completed", "canceled"] } } }) { nodes { ${ISSUE_FIELDS} } pageInfo { hasNextPage endCursor } } } }`,
   IssuesByIds: `query IssuesByIds($ids: [ID!]!, $includeArchived: Boolean!) { issues(first: 50, filter: { id: { in: $ids } }, includeArchived: $includeArchived) { nodes { ${ISSUE_FIELDS} } } }`,
   TeamStates: `query TeamStates($teamId: ID!, $after: String) { workflowStates(first: 100, after: $after, filter: { team: { id: { eq: $teamId } } }) { nodes { id name type position } pageInfo { hasNextPage endCursor } } }`,
   UpdateIssue: `mutation UpdateIssue($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success issue { ${ISSUE_FIELDS} } } }`,
@@ -108,13 +108,15 @@ export function createLinearClient(options: CreateLinearClientOptions): LinearCl
       const issues: LinearIssue[] = [];
       let after: string | null = null;
       let viewerId = "";
+      let viewerName = "";
       for (let page = 0; page < MAX_PAGES; page++) {
-        const result = await request("ViewerAssignedIssues", { after }, assignedSchema, signal);
+        const result: z.infer<typeof assignedSchema> = await request("ViewerAssignedIssues", { after }, assignedSchema, signal);
         viewerId = result.data.viewer.id;
+        viewerName = result.data.viewer.name;
         issues.push(...result.data.viewer.assignedIssues.nodes);
         if (issues.length > MAX_ISSUES) throw new LinearApiError("LINEAR_API_ERROR", "Linear issue result limit exceeded.");
-        const info = result.data.viewer.assignedIssues.pageInfo;
-        if (!info.hasNextPage) return { viewerId, issues } satisfies LinearAssignedSnapshot;
+        const info: z.infer<typeof pageInfoSchema> = result.data.viewer.assignedIssues.pageInfo;
+        if (!info.hasNextPage) return { viewerId, viewerName, issues } satisfies LinearAssignedSnapshot;
         if (!info.endCursor) throw new LinearApiError("LINEAR_API_ERROR", "Linear returned invalid pagination data.");
         after = info.endCursor;
       }
@@ -132,9 +134,9 @@ export function createLinearClient(options: CreateLinearClientOptions): LinearCl
       const states: LinearWorkflowState[] = [];
       let after: string | null = null;
       for (let page = 0; page < MAX_PAGES; page++) {
-        const result = await request("TeamStates", { teamId, after }, statesSchema, signal);
+        const result: z.infer<typeof statesSchema> = await request("TeamStates", { teamId, after }, statesSchema, signal);
         states.push(...result.data.workflowStates.nodes);
-        const info = result.data.workflowStates.pageInfo;
+        const info: z.infer<typeof pageInfoSchema> = result.data.workflowStates.pageInfo;
         if (!info.hasNextPage) return states;
         if (!info.endCursor) throw new LinearApiError("LINEAR_API_ERROR", "Linear returned invalid pagination data.");
         after = info.endCursor;

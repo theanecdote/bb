@@ -29,18 +29,24 @@ export async function listAllTasks(
   rpc: TasksRpc,
   input: TaskListQuery = {},
 ): Promise<Task[]> {
-  const tasks: Task[] = [];
-  let cursor: string | undefined;
-  do {
-    const page = await rpc.call("listTasks", {
-      ...input,
-      limit: TASKS_PAGE_MAX_LIMIT,
-      ...(cursor === undefined ? {} : { cursor }),
-    });
-    tasks.push(...page.tasks);
-    cursor = page.nextCursor ?? undefined;
-  } while (cursor !== undefined);
-  return tasks;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const tasks: Task[] = [];
+    let cursor: string | undefined;
+    try {
+      do {
+        const page = await rpc.call("listTasks", {
+          ...input, limit: TASKS_PAGE_MAX_LIMIT,
+          ...(cursor === undefined ? {} : { cursor }),
+        });
+        tasks.push(...page.tasks);
+        cursor = page.nextCursor ?? undefined;
+      } while (cursor !== undefined);
+      return tasks;
+    } catch (error) {
+      if (attempt === 2 || typeof error !== "object" || error === null || !("code" in error) || error.code !== "stale_cursor") throw error;
+    }
+  }
+  throw new Error("Task list changed too frequently");
 }
 
 export const INVALIDATION_CHANNELS = [
@@ -48,6 +54,7 @@ export const INVALIDATION_CHANNELS = [
   "projects:changed",
   "comments:changed",
   "threads:changed",
+  "linear:changed",
 ] as const;
 
 export type InvalidationChannel = (typeof INVALIDATION_CHANNELS)[number];
@@ -70,6 +77,7 @@ export function useInvalidation(
   useRealtime("projects:changed", () => fire("projects:changed"));
   useRealtime("comments:changed", () => fire("comments:changed"));
   useRealtime("threads:changed", () => fire("threads:changed"));
+  useRealtime("linear:changed", () => fire("linear:changed"));
 }
 
 export interface TasksQuery<T> {
@@ -161,6 +169,13 @@ export function usePresets() {
   return useTasksQuery(
     async (rpc) => (await rpc.call("listPresets")).presets,
     ["projects:changed"],
+  );
+}
+
+export function useLinearStatus() {
+  return useTasksQuery(
+    async (rpc) => await rpc.call("linearStatus", null),
+    ["linear:changed"],
   );
 }
 

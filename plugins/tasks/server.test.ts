@@ -8,6 +8,9 @@ describe("Tasks plugin scaffold", () => {
 
     await plugin(bb);
 
+    expect(harness.registrations.services.map(({ name }) => name)).toContain("linear-sync");
+    expect(harness.registrations.settingsDescriptors.linearApiKey).toMatchObject({ secret: true });
+
     expect(harness.logEntries).toEqual([
       {
         level: "info",

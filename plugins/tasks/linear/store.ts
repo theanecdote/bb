@@ -152,6 +152,15 @@ export function createLinearMappingStore(db: PluginDatabase) {
       const row = getIssueByTask.get(taskId);
       return row ? issueFromRow(row) : undefined;
     },
+    getIssueMappingsByTasks(taskIds: readonly string[]) {
+      const result = new Map<string, LinearIssueMapping>();
+      if (taskIds.length === 0) return result;
+      const rows = db.prepare<string[], IssueRow>(
+        `SELECT * FROM linear_issue_tasks WHERE task_id IN (${taskIds.map(() => "?").join(", ")})`,
+      ).all(...taskIds);
+      for (const row of rows) result.set(row.task_id, issueFromRow(row));
+      return result;
+    },
     upsertIssueMapping(mapping: LinearIssueMapping) {
       upsertIssue.run(
         mapping.linearIssueId,

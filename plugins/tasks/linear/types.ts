@@ -28,6 +28,7 @@ export interface LinearIssue {
 
 export interface LinearAssignedSnapshot {
   viewerId: string;
+  viewerName: string;
   issues: LinearIssue[];
 }
 

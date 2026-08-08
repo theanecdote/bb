@@ -18,6 +18,7 @@ import {
   LinearMutationError,
   type LinearMutationBridge,
 } from "../linear/mutations";
+import type { LinearSyncResult, LinearSyncStatus } from "../linear/sync";
 import {
   tasksRpcContract,
   type Attachment as AttachmentMetadata,
@@ -71,11 +72,13 @@ export interface TasksApiStore {
   projectPrefixExists(prefix: string, excludingProjectId: string): boolean;
   sidebarSummary(): SidebarProjectSummary[];
   isMappedTask(taskId: string): boolean;
+  linearSources(taskIds: readonly string[]): Map<string, { identifier: string; url: string }>;
 }
 
 export function createStore(
   bb: BbPluginApi,
   isMappedTask: (taskId: string) => boolean = () => false,
+  linearSources: (taskIds: readonly string[]) => Map<string, { identifier: string; url: string }> = () => new Map(),
 ): TasksApiStore {
   const database = bb.storage.database();
   const tasks = createTasksStore(database);
@@ -83,6 +86,7 @@ export function createStore(
   return {
     tasks,
     isMappedTask,
+    linearSources,
     transaction<T>(operation: () => T): T {
       return database.transaction(operation)();
     },
@@ -221,19 +225,23 @@ export function publishCommentsChanged(
 }
 
 function apiTask(store: TasksApiStore, task: StoredTask): Task {
+  const source = store.linearSources([task.id]).get(task.id) ?? null;
   return {
     ...task,
     labelIds: store.taskLabelIds([task.id]).get(task.id) ?? [],
-    linearMapped: store.isMappedTask(task.id),
+    linearMapped: source !== null,
+    linearSource: source,
   };
 }
 
 function apiTasks(store: TasksApiStore, tasks: StoredTask[]): Task[] {
   const labelsByTask = store.taskLabelIds(tasks.map((task) => task.id));
+  const sources = store.linearSources(tasks.map((task) => task.id));
   return tasks.map((task) => ({
     ...task,
     labelIds: labelsByTask.get(task.id) ?? [],
-    linearMapped: store.isMappedTask(task.id),
+    linearMapped: sources.has(task.id),
+    linearSource: sources.get(task.id) ?? null,
   }));
 }
 
@@ -671,8 +679,11 @@ export function registerHandlers(
   bb: BbPluginApi,
   store: TasksApiStore,
   mutations?: LinearMutationBridge,
+  linear?: { status(): Promise<LinearSyncStatus & { configured: boolean }>; sync(): Promise<LinearSyncResult> },
 ): PluginRpcHandlers<typeof tasksRpcContract> {
   return {
+    linearStatus: async () => await linear!.status(),
+    linearSyncNow: async () => await linear!.sync(),
     pluginTransport() {
       const pluginBaseUrl = `/api/v1/plugins/${encodeURIComponent(bb.pluginId)}`;
       return {
@@ -1189,6 +1200,7 @@ export function registerTasksApi(
   bb: BbPluginApi,
   store: TasksApiStore,
   mutations?: LinearMutationBridge,
+  linear?: { status(): Promise<LinearSyncStatus & { configured: boolean }>; sync(): Promise<LinearSyncResult> },
 ): void {
-  bb.rpc.register(tasksRpcContract, registerHandlers(bb, store, mutations));
+  bb.rpc.register(tasksRpcContract, registerHandlers(bb, store, mutations, linear));
 }

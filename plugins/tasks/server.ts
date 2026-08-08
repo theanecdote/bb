@@ -8,6 +8,7 @@ import { registerDelegation } from "./delegate";
 import { registerLifecycle } from "./lifecycle";
 import { registerMentions } from "./mentions";
 import { createLinearMappingStore } from "./linear/store";
+import { registerLinearIntegration } from "./linear/index";
 
 export const TASKS_PLUGIN_NAME = "Tasks";
 export const TASKS_PLUGIN_VERSION = "0.1.1";
@@ -30,12 +31,19 @@ export default async function plugin(bb: BbPluginApi) {
   const store = createStore(
     bb,
     (taskId) => mappings?.getIssueMappingByTask(taskId) !== undefined,
+    (taskIds) => {
+      const result = new Map<string, { identifier: string; url: string }>();
+      for (const [taskId, mapping] of mappings?.getIssueMappingsByTasks(taskIds) ?? [])
+        result.set(taskId, { identifier: mapping.identifier, url: mapping.url });
+      return result;
+    },
   );
   mappings = createLinearMappingStore(bb.storage.database());
-  registerTasksApi(bb, store);
-  registerAttachments(bb, store.tasks);
+  const linear = registerLinearIntegration(bb, store, mappings);
+  registerTasksApi(bb, store, linear.mutations, linear);
+  registerAttachments(bb, store.tasks, { mutations: linear.mutations });
   registerTasksCli(bb, store, statusPayload());
-  registerDelegation(bb, store);
+  registerDelegation(bb, store, linear.mutations);
   registerMentions(bb, store);
   await registerLifecycle(bb, store);
 

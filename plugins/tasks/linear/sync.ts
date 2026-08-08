@@ -11,6 +11,9 @@ export type LinearSyncErrorCode =
 
 export interface LinearSyncStatus {
   syncing: boolean;
+  viewerName: string | null;
+  activeIssueCount: number;
+  retryAt: string | null;
   lastSuccessfulSyncAt: string | null;
   lastAttemptAt: string | null;
   lastError: { code: LinearSyncErrorCode; message: string } | null;
@@ -88,6 +91,9 @@ export function createLinearSyncService(deps: LinearSyncDependencies): LinearSyn
   let syncing = false;
   const warnedStateIds = new Set<string>();
   let volatileError: LinearSyncStatus["lastError"] = null;
+  let viewerName: string | null = null;
+  let activeIssueCount = 0;
+  let rateLimitRetryAt: string | null = null;
   const now = () => (deps.now ?? (() => new Date()))().toISOString();
 
   const mapState = (issue: LinearIssue): TaskStatus => {
@@ -127,6 +133,8 @@ export function createLinearSyncService(deps: LinearSyncDependencies): LinearSyn
     try {
       // All network work and all validation happen before the first mutation.
       const snapshot = await deps.client.viewerAssignedIssues();
+      viewerName = snapshot.viewerName;
+      activeIssueCount = snapshot.issues.length;
       validateSnapshot(snapshot.issues);
       const activeIds = new Set(snapshot.issues.map((issue) => issue.id));
       const missing = deps.mappings.listActiveIssueMappings().filter((mapping) => !activeIds.has(mapping.linearIssueId));
@@ -201,12 +209,17 @@ export function createLinearSyncService(deps: LinearSyncDependencies): LinearSyn
         deps.mappings.updateSyncState({ lastAttemptAt: attemptAt, lastSuccessfulSyncAt: attemptAt, lastError: null });
       });
       volatileError = null;
+      rateLimitRetryAt = null;
       for (const id of changedProjects) deps.publishProjectChanged?.(id);
       for (const [taskId, projectId] of changedTasks) deps.publishTaskChanged?.(taskId, projectId);
       return { ok: true, createdProjects, createdTasks, updatedTasks, deactivatedTasks };
     } catch (cause) {
       const error = safeError(cause);
       volatileError = error;
+      if (error.code === "LINEAR_RATE_LIMITED" && typeof cause === "object" && cause !== null && "retryAt" in cause) {
+        const retryAt = (cause as { retryAt?: Date }).retryAt;
+        rateLimitRetryAt = retryAt?.toISOString() ?? null;
+      }
       const previous = deps.mappings.getSyncState();
       deps.store.transaction(() => deps.mappings.updateSyncState({ ...previous, lastAttemptAt: attemptAt, lastError: error.message }));
       return { ok: false, createdProjects: 0, createdTasks: 0, updatedTasks: 0, deactivatedTasks: 0, error };
@@ -222,7 +235,7 @@ export function createLinearSyncService(deps: LinearSyncDependencies): LinearSyn
     },
     getStatus() {
       const state = deps.mappings.getSyncState();
-      return { syncing, ...state, lastError: volatileError ?? (state.lastError ? { code: "LINEAR_API_ERROR", message: state.lastError } : null) };
+      return { syncing, viewerName, activeIssueCount, retryAt: rateLimitRetryAt, ...state, lastError: volatileError ?? (state.lastError ? { code: "LINEAR_API_ERROR", message: state.lastError } : null) };
     },
   };
 }

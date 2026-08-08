@@ -124,6 +124,7 @@ export const taskSchema = z
     updatedAt: z.string(),
     labelIds: z.array(idSchema),
     linearMapped: z.boolean(),
+    linearSource: z.object({ identifier: z.string(), url: z.string().url() }).strict().nullable(),
   })
   .strict();
 
@@ -258,6 +259,9 @@ export const tasksDomainErrorSchema = z
       "project_prefix_conflict",
       "attachment_referenced",
       "linear_write_failed",
+      "linear_rate_limited",
+      "linear_mapping_error",
+      "linear_project_readonly",
       "mapped_project_import_only",
       "mapped_attachment_forbidden",
     ]),
@@ -413,6 +417,19 @@ const updatePresetInputSchema = z
   });
 
 export const tasksRpcContract = defineRpcContract({
+  linearStatus: {
+    input: z.null(),
+    output: z.object({
+      configured: z.boolean(), syncing: z.boolean(), viewerName: z.string().nullable(),
+      activeIssueCount: z.number().int().nonnegative(), lastSuccessfulSyncAt: z.string().nullable(),
+      lastAttemptAt: z.string().nullable(), lastError: z.object({ code: z.enum(["LINEAR_MAPPING_ERROR", "LINEAR_RATE_LIMITED", "LINEAR_API_ERROR"]), message: z.string() }).strict().nullable(),
+      retryAt: z.string().nullable(),
+    }).strict(),
+  },
+  linearSyncNow: {
+    input: z.null(),
+    output: z.object({ ok: z.boolean(), createdProjects: z.number().int().nonnegative(), createdTasks: z.number().int().nonnegative(), updatedTasks: z.number().int().nonnegative(), deactivatedTasks: z.number().int().nonnegative(), error: z.object({ code: z.enum(["LINEAR_MAPPING_ERROR", "LINEAR_RATE_LIMITED", "LINEAR_API_ERROR"]), message: z.string() }).strict().optional() }).strict(),
+  },
   pluginTransport: {
     input: z.null(),
     output: z
