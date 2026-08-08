@@ -5,12 +5,51 @@ import {
   POLL_MAX_INTERVAL_MS,
   applyRefreshedLink,
   createLoadSequencer,
+  isFollowupSubmitKey,
   isLiveState,
   mergeTranscript,
   nextPollDelay,
   type PanelState,
   type TranscriptMessage,
 } from "../panel-state";
+
+describe("follow-up keyboard submission", () => {
+  it("submits on Command/Ctrl+Enter but not plain Enter or IME composition", () => {
+    assert.equal(
+      isFollowupSubmitKey({
+        key: "Enter",
+        metaKey: true,
+        ctrlKey: false,
+      }),
+      true,
+    );
+    assert.equal(
+      isFollowupSubmitKey({
+        key: "Enter",
+        metaKey: false,
+        ctrlKey: true,
+      }),
+      true,
+    );
+    assert.equal(
+      isFollowupSubmitKey({
+        key: "Enter",
+        metaKey: false,
+        ctrlKey: false,
+      }),
+      false,
+    );
+    assert.equal(
+      isFollowupSubmitKey({
+        key: "Enter",
+        metaKey: true,
+        ctrlKey: false,
+        isComposing: true,
+      }),
+      false,
+    );
+  });
+});
 
 function message(id: string, text = id): TranscriptMessage {
   return { id, role: "assistant", text };

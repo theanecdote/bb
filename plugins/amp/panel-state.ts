@@ -126,3 +126,16 @@ const LIVE_STATES = ["created", "running", "waiting"];
 export function isLiveState(state: string | undefined) {
   return state !== undefined && LIVE_STATES.includes(state);
 }
+
+export function isFollowupSubmitKey(input: {
+  key: string;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  isComposing?: boolean;
+}) {
+  return (
+    input.key === "Enter" &&
+    (input.metaKey || input.ctrlKey) &&
+    input.isComposing !== true
+  );
+}
