@@ -224,10 +224,6 @@ function TaskDetail({
         : { ok: false, errorMessage: result.error.message };
     },
     onError: (message) => pushRef.current("error", message),
-    delayMs: (taskId) =>
-      taskId === task.id && task.linearMapped
-        ? LINEAR_DESCRIPTION_SAVE_DELAY_MS
-        : DESCRIPTION_SAVE_DELAY_MS,
   });
 
   const projects = useTasksQuery(
@@ -316,7 +312,14 @@ function TaskDetail({
 
   const onDescriptionChange = (markdown: string) => {
     setDraft({ taskId: task.id, markdown });
-    saverRef.current?.onChange(task.id, markdown);
+    saverRef.current?.onChange(
+      task.id,
+      markdown,
+      task.linearMapped
+        ? LINEAR_DESCRIPTION_SAVE_DELAY_MS
+        : DESCRIPTION_SAVE_DELAY_MS,
+      task.linearMapped ? LINEAR_DESCRIPTION_SAVE_DELAY_MS : undefined,
+    );
   };
 
   const flushDescription = () => saverRef.current?.flush(task.id);

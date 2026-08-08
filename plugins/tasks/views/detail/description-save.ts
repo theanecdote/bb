@@ -7,15 +7,19 @@ export interface DescriptionSaveOutcome {
 export interface DescriptionSaverOptions {
   save(taskId: string, markdown: string): Promise<DescriptionSaveOutcome>;
   onError(message: string): void;
-  delayMs: number | ((taskId: string) => number);
   /** Timer injection point for tests; returns a cancel function. */
   schedule?(run: () => void, delayMs: number): () => void;
 }
 
 export interface DescriptionSaver {
   /** Record a new draft and (re)start the debounce timer. */
-  onChange(taskId: string, markdown: string): void;
-  /** Fire any pending draft for `taskId` immediately (unmount/task switch). */
+  onChange(
+    taskId: string,
+    markdown: string,
+    delayMs: number,
+    retryFloorMs?: number,
+  ): void;
+  /** Flush a draft now, unless a failed write's retry floor is still active. */
   flush(taskId: string): void;
   hasPending(): boolean;
 }
@@ -36,51 +40,80 @@ export function createDescriptionSaver(
       return () => clearTimeout(timer);
     });
 
-  let cancelTimer: (() => void) | undefined;
-  let pending: { taskId: string; markdown: string } | undefined;
+  interface PendingDraft {
+    taskId: string;
+    markdown: string;
+    delayMs: number;
+    retryFloorMs?: number;
+    cancelTimer?: () => void;
+    inFlight: boolean;
+    retryNotBefore?: number;
+  }
+  const pending = new Map<string, PendingDraft>();
 
-  const runSave = async (attempt: { taskId: string; markdown: string }) => {
+  const arm = (draft: PendingDraft, delayMs: number) => {
+    draft.cancelTimer?.();
+    draft.cancelTimer = schedule(() => {
+      draft.cancelTimer = undefined;
+      void runSave(draft);
+    }, delayMs);
+  };
+
+  const runSave = async (draft: PendingDraft) => {
+    if (draft.inFlight || pending.get(draft.taskId) !== draft) return;
+    const attempt = draft.markdown;
+    draft.inFlight = true;
     try {
-      const result = await options.save(attempt.taskId, attempt.markdown);
+      const result = await options.save(draft.taskId, attempt);
       // A newer draft may have arrived while the RPC was in flight; only the
       // attempt that was actually sent is settled.
-      if (pending === attempt) pending = undefined;
+      if (draft.markdown === attempt) pending.delete(draft.taskId);
       if (!result.ok && result.errorMessage !== undefined) {
         options.onError(result.errorMessage);
       }
     } catch (error) {
       options.onError(error instanceof Error ? error.message : String(error));
+      // Mapped writes have a hard minimum interval. Keep the failed draft and
+      // its original policy even if the component navigates to another task.
+      // Unmapped failures remain pending for an explicit future flush/edit,
+      // rather than entering an automatic 800ms retry loop.
+      if (draft.retryFloorMs !== undefined) {
+        draft.retryNotBefore = Date.now() + draft.retryFloorMs;
+        arm(draft, draft.retryFloorMs);
+      }
+    } finally {
+      draft.inFlight = false;
     }
   };
 
   return {
-    onChange(taskId, markdown) {
-      pending = { taskId, markdown };
-      cancelTimer?.();
-      const attempt = pending;
-      cancelTimer = schedule(
-        () => {
-          // Send whatever is pending now — a retry after a transport failure
-          // should carry the latest draft, not the one that armed the timer.
-          void runSave(pending ?? attempt);
-        },
-        typeof options.delayMs === "function"
-          ? options.delayMs(taskId)
-          : options.delayMs,
-      );
+    onChange(taskId, markdown, delayMs, retryFloorMs) {
+      const previous = pending.get(taskId);
+      const draft: PendingDraft = previous ?? {
+        taskId,
+        markdown,
+        delayMs,
+        inFlight: false,
+      };
+      draft.markdown = markdown;
+      draft.delayMs = delayMs;
+      draft.retryFloorMs = retryFloorMs;
+      pending.set(taskId, draft);
+      const retryDelay = Math.max(0, (draft.retryNotBefore ?? 0) - Date.now());
+      arm(draft, Math.max(delayMs, retryDelay));
     },
     flush(taskId) {
-      cancelTimer?.();
-      cancelTimer = undefined;
-      if (pending === undefined || pending.taskId !== taskId) return;
-      const attempt = pending;
-      pending = undefined;
-      // Fire-and-forget: the component is unmounting, so there is nothing
-      // left to retry from — but the draft got its send.
-      void options
-        .save(attempt.taskId, attempt.markdown)
-        .catch(() => undefined);
+      const draft = pending.get(taskId);
+      if (draft === undefined) return;
+      const retryDelay = (draft.retryNotBefore ?? 0) - Date.now();
+      if (retryDelay > 0) {
+        arm(draft, retryDelay);
+        return;
+      }
+      draft.cancelTimer?.();
+      draft.cancelTimer = undefined;
+      void runSave(draft);
     },
-    hasPending: () => pending !== undefined,
+    hasPending: () => pending.size > 0,
   };
 }
