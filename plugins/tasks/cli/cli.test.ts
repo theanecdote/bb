@@ -207,7 +207,9 @@ describe("bb tasks CLI", () => {
         threadId: "thr_cli_agent",
       });
       expect(fetch).toHaveBeenCalledTimes(1);
-      expect(createStore(bb).tasks.listComments(task.id)).toEqual([
+      expect(
+        createStore(bb, bb.storage.database()).tasks.listComments(task.id),
+      ).toEqual([
         expect.objectContaining({ id: human.id, kind: "user" }),
         expect.objectContaining({ id: agent.id, kind: "agent" }),
       ]);
@@ -219,21 +221,22 @@ describe("bb tasks CLI", () => {
 
   it("reports Linear status and sync in human and JSON forms without accepting or exposing keys", async () => {
     const secret = "lin_api_do-not-print";
-    const fetch = vi.fn(async () =>
-      new Response(
-        JSON.stringify({
-          data: {
-            viewer: {
-              id: "viewer-1",
-              name: "Ada",
-              assignedIssues: {
-                nodes: [],
-                pageInfo: { hasNextPage: false, endCursor: null },
+    const fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: {
+              viewer: {
+                id: "viewer-1",
+                name: "Ada",
+                assignedIssues: {
+                  nodes: [],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
               },
             },
-          },
-        }),
-      ),
+          }),
+        ),
     );
     vi.stubGlobal("fetch", fetch);
     const { bb, harness } = createFakePluginHost({
@@ -763,7 +766,7 @@ describe("bb tasks CLI", () => {
   it("traverses a project whose former single JSON response exceeds 64 KiB", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
     await plugin(bb);
-    const store = createStore(bb);
+    const store = createStore(bb, bb.storage.database());
     const project = store.tasks.createProject({
       name: "Large project",
       prefix: "BIG",
@@ -1197,7 +1200,7 @@ describe("bb tasks CLI", () => {
         presetName: "Attached",
       }),
     ]);
-    const taskStore = createStore(bb).tasks;
+    const taskStore = createStore(bb, bb.storage.database()).tasks;
     taskStore.createComment({
       taskId: threads.task.id,
       kind: "agent",

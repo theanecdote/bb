@@ -35,7 +35,7 @@ function setup(active: LinearIssue[] = [issue()]) {
     pluginId: "linear-sync-test",
   });
   disposals.push(() => harness.dispose());
-  const store = createStore(bb);
+  const store = createStore(bb, bb.storage.database());
   const mappings = createLinearMappingStore(bb.storage.database());
   const client: LinearClient = {
     viewerAssignedIssues: vi.fn(async () => ({

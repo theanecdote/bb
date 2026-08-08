@@ -12,7 +12,6 @@ describe("Tasks plugin scaffold", () => {
 
     await plugin(bb);
 
-    // Tasks and Linear share one connection; the other two belong to independent subsystems.
     expect(databaseSpy).toHaveBeenCalledTimes(3);
 
     expect(harness.registrations.services.map(({ name }) => name)).toContain(

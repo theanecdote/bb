@@ -17,7 +17,7 @@ afterEach(async () => {
 function setup() {
   const { bb, harness } = createFakePluginHost({ pluginId: "mutation-test" });
   disposals.push(() => harness.dispose());
-  const store = createStore(bb);
+  const store = createStore(bb, bb.storage.database());
   const mappings = createLinearMappingStore(bb.storage.database());
   const project = store.tasks.createProject({
     name: "People",

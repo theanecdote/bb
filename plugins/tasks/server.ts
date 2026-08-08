@@ -31,6 +31,7 @@ export default async function plugin(bb: BbPluginApi) {
   let mappings: ReturnType<typeof createLinearMappingStore> | undefined;
   const store = createStore(
     bb,
+    database,
     (taskId) => mappings?.getIssueMappingByTask(taskId) !== undefined,
     (taskIds) => {
       const result = new Map<string, { identifier: string; url: string }>();
@@ -43,7 +44,6 @@ export default async function plugin(bb: BbPluginApi) {
         });
       return result;
     },
-    database,
   );
   mappings = createLinearMappingStore(database);
   const linear = registerLinearIntegration(bb, store, mappings);

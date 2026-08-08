@@ -80,13 +80,11 @@ export interface TasksApiStore {
 
 export function createStore(
   bb: BbPluginApi,
+  database: ReturnType<BbPluginApi["storage"]["database"]>,
   isMappedTask: (taskId: string) => boolean = () => false,
   linearSources: (
     taskIds: readonly string[],
   ) => Map<string, { identifier: string; url: string }> = () => new Map(),
-  database: ReturnType<
-    BbPluginApi["storage"]["database"]
-  > = bb.storage.database(),
 ): TasksApiStore {
   const tasks = createTasksStore(database);
 

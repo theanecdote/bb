@@ -46,7 +46,7 @@ describe("task delegation", () => {
         },
       },
     });
-    const store = createStore(bb);
+    const store = createStore(bb, bb.storage.database());
     const mappings = createLinearMappingStore(bb.storage.database());
     const project = store.tasks.createProject({
       name: "Mapped",
@@ -138,7 +138,7 @@ describe("task delegation", () => {
         },
       },
     });
-    const store = createStore(bb);
+    const store = createStore(bb, bb.storage.database());
     const project = store.tasks.createProject({
       name: "Tasks plugin",
       prefix: "TASK",
@@ -232,7 +232,7 @@ describe("task delegation", () => {
         },
       },
     });
-    const store = createStore(bb);
+    const store = createStore(bb, bb.storage.database());
     const project = store.tasks.createProject({
       name: "Fast delegation",
       prefix: "FAST",
@@ -275,7 +275,7 @@ describe("task delegation", () => {
         },
       },
     });
-    const store = createStore(bb);
+    const store = createStore(bb, bb.storage.database());
     const project = store.tasks.createProject({
       name: "Worktree delegation",
       prefix: "WT",
@@ -334,7 +334,7 @@ describe("task delegation", () => {
         },
       },
     });
-    const store = createStore(bb);
+    const store = createStore(bb, bb.storage.database());
     const project = store.tasks.createProject({
       name: "Default worktree target",
       prefix: "DWT",
@@ -389,7 +389,7 @@ describe("task delegation", () => {
         },
       },
     });
-    const store = createStore(bb);
+    const store = createStore(bb, bb.storage.database());
     const project = store.tasks.createProject({
       name: "Invalid target",
       prefix: "BAD",
@@ -426,7 +426,7 @@ describe("task delegation", () => {
       pluginId: "tasks",
       sdk: { threads: { spawn: async () => ({ id: "thr_never" }) } },
     });
-    const store = createStore(bb);
+    const store = createStore(bb, bb.storage.database());
     const project = store.tasks.createProject({
       name: "Unlinked",
       prefix: "UNL",
@@ -464,7 +464,7 @@ describe("task delegation", () => {
         },
       },
     });
-    const store = createStore(bb);
+    const store = createStore(bb, bb.storage.database());
     const project = store.tasks.createProject({
       name: "Manual",
       prefix: "MAN",
