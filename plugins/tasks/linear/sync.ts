@@ -32,13 +32,13 @@ export interface LinearSyncResult {
 }
 
 export interface LinearSyncService {
-  sync(): Promise<LinearSyncResult>;
+  sync(signal?: AbortSignal): Promise<LinearSyncResult>;
   getStatus(): LinearSyncStatus;
   rejectedCredentials(): boolean;
 }
 
 export interface LinearSyncDependencies {
-  client: LinearClient;
+  client: LinearClient | (() => Promise<LinearClient>);
   mappings: LinearMappingStore;
   store: TasksApiStore;
   publishProjectChanged?: (projectId: string) => void;
@@ -116,7 +116,6 @@ export function createLinearSyncService(
   let volatileError: LinearSyncStatus["lastError"] = null;
   let viewerName: string | null = null;
   let activeIssueCount = 0;
-  let rateLimitRetryAt: string | null = null;
   let credentialsRejected = false;
   const now = () => (deps.now ?? (() => new Date()))().toISOString();
 
@@ -174,11 +173,13 @@ export function createLinearSyncService(
     }
   }
 
-  async function run(): Promise<LinearSyncResult> {
+  async function run(signal?: AbortSignal): Promise<LinearSyncResult> {
     const attemptAt = now();
     try {
+      const client =
+        typeof deps.client === "function" ? await deps.client() : deps.client;
       // All network work and all validation happen before the first mutation.
-      const snapshot = await deps.client.viewerAssignedIssues();
+      const snapshot = await client.viewerAssignedIssues(signal);
       viewerName = snapshot.viewerName;
       activeIssueCount = snapshot.issues.length;
       validateSnapshot(snapshot.issues);
@@ -187,8 +188,9 @@ export function createLinearSyncService(
         .listActiveIssueMappings()
         .filter((mapping) => !activeIds.has(mapping.linearIssueId));
       const reconciled = missing.length
-        ? await deps.client.issuesByIds(
+        ? await client.issuesByIds(
             missing.map((mapping) => mapping.linearIssueId),
+            signal,
           )
         : [];
       const reconciledById = new Map(
@@ -327,11 +329,12 @@ export function createLinearSyncService(
           lastAttemptAt: attemptAt,
           lastSuccessfulSyncAt: attemptAt,
           lastError: null,
+          lastErrorCode: null,
+          retryAt: null,
         });
       });
       volatileError = null;
       credentialsRejected = false;
-      rateLimitRetryAt = null;
       for (const id of changedProjects) deps.publishProjectChanged?.(id);
       for (const [taskId, projectId] of changedTasks)
         deps.publishTaskChanged?.(taskId, projectId);
@@ -350,21 +353,18 @@ export function createLinearSyncService(
         cause.rejectedCredentials === true;
       const error = safeError(cause);
       volatileError = error;
-      if (
-        error.code === "LINEAR_RATE_LIMITED" &&
-        typeof cause === "object" &&
-        cause !== null &&
-        "retryAt" in cause
-      ) {
-        const retryAt = (cause as { retryAt?: Date }).retryAt;
-        rateLimitRetryAt = retryAt?.toISOString() ?? null;
-      }
       const previous = deps.mappings.getSyncState();
       deps.store.transaction(() =>
         deps.mappings.updateSyncState({
           ...previous,
           lastAttemptAt: attemptAt,
           lastError: error.message,
+          lastErrorCode: error.code,
+          retryAt:
+            error.code === "LINEAR_RATE_LIMITED" &&
+            typeof cause === "object" && cause !== null && "retryAt" in cause
+              ? (cause as { retryAt?: Date }).retryAt?.toISOString() ?? null
+              : null,
         }),
       );
       return {
@@ -379,10 +379,10 @@ export function createLinearSyncService(
   }
 
   return {
-    sync() {
+    sync(signal) {
       if (flight) return flight;
       syncing = true;
-      flight = run().finally(() => {
+      flight = run(signal).finally(() => {
         syncing = false;
         flight = null;
       });
@@ -394,12 +394,13 @@ export function createLinearSyncService(
         syncing,
         viewerName,
         activeIssueCount,
-        retryAt: rateLimitRetryAt,
-        ...state,
+        retryAt: state.retryAt,
+        lastSuccessfulSyncAt: state.lastSuccessfulSyncAt,
+        lastAttemptAt: state.lastAttemptAt,
         lastError:
           volatileError ??
           (state.lastError
-            ? { code: "LINEAR_API_ERROR", message: state.lastError }
+            ? { code: state.lastErrorCode ?? "LINEAR_API_ERROR", message: state.lastError }
             : null),
       };
     },

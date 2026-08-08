@@ -4,6 +4,7 @@ import { createStore } from "../api/index.js";
 import { DEFAULT_COLOR } from "../views/manage/shared.js";
 import { createLinearMappingStore } from "./store.js";
 import { createLinearSyncService } from "./sync.js";
+import { LinearApiError } from "./client.js";
 import type { LinearClient, LinearIssue } from "./types.js";
 
 const disposals: Array<() => Promise<void>> = [];
@@ -238,5 +239,59 @@ describe("Linear projection and reconciliation", () => {
     expect(h.service.getStatus().lastSuccessfulSyncAt).toBe(
       "2026-08-08T12:00:00.000Z",
     );
+  });
+
+  it("persists typed failure status across recreation without changing successful data", async () => {
+    const h = setup([]);
+    await h.service.sync();
+    const success = h.service.getStatus().lastSuccessfulSyncAt;
+    vi.mocked(h.client.viewerAssignedIssues).mockRejectedValueOnce(
+      new LinearApiError(
+        "LINEAR_RATE_LIMITED",
+        "Linear is rate limited. Try again later.",
+        new Date("2026-08-08T13:00:00.000Z"),
+      ),
+    );
+    await h.service.sync();
+    const recreated = createLinearSyncService({
+      client: h.client,
+      mappings: h.mappings,
+      store: h.store,
+    });
+    expect(recreated.getStatus()).toMatchObject({
+      lastSuccessfulSyncAt: success,
+      retryAt: "2026-08-08T13:00:00.000Z",
+      lastError: {
+        code: "LINEAR_RATE_LIMITED",
+        message: "Linear is rate limited. Try again later.",
+      },
+    });
+  });
+
+  it("uses one client snapshot for the complete flight and forwards its signal", async () => {
+    const h = setup([]);
+    const controller = new AbortController();
+    const first = h.client;
+    const second = { ...h.client, viewerAssignedIssues: vi.fn() };
+    let selected: LinearClient = first;
+    let release!: () => void;
+    vi.mocked(first.viewerAssignedIssues).mockImplementationOnce((signal) => {
+      expect(signal).toBe(controller.signal);
+      return new Promise((resolve) => {
+        release = () => resolve({ viewerId: "viewer", viewerName: "Viewer", issues: [] });
+      });
+    });
+    const service = createLinearSyncService({
+      client: async () => selected,
+      mappings: h.mappings,
+      store: h.store,
+    });
+    const flight = service.sync(controller.signal);
+    await vi.waitFor(() => expect(first.viewerAssignedIssues).toHaveBeenCalledOnce());
+    selected = second;
+    expect(service.sync()).toBe(flight);
+    release();
+    await flight;
+    expect(second.viewerAssignedIssues).not.toHaveBeenCalled();
   });
 });

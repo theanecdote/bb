@@ -97,6 +97,14 @@ describe("LinearMutationBridge", () => {
     );
   });
 
+  it("clears cached workflow states when credentials rotate", async () => {
+    const h = setup();
+    await h.bridge.prepareTaskMutation(h.task, { status: "in_review" }, "agent");
+    h.bridge.clearWorkflowStateCache();
+    await h.bridge.prepareTaskMutation(h.task, { status: "in_review" }, "agent");
+    expect(h.client.teamStates).toHaveBeenCalledTimes(2);
+  });
+
   it("leaves BB unchanged when Linear rejects and bypasses echo for linear-sync", async () => {
     const h = setup();
     vi.mocked(h.client.updateIssue).mockRejectedValueOnce(

@@ -14,7 +14,7 @@ const needsConfiguration = (message: string) =>
 export interface LinearRuntime {
   mutations: ReturnType<typeof createLinearMutationBridge>;
   status(): Promise<LinearSyncStatus & { configured: boolean }>;
-  sync(): Promise<LinearSyncResult>;
+  sync(signal?: AbortSignal): Promise<LinearSyncResult>;
 }
 
 export function registerLinearIntegration(
@@ -31,7 +31,6 @@ export function registerLinearIntegration(
     },
   });
   let client: LinearClient | null = null;
-  let service: ReturnType<typeof createLinearSyncService> | null = null;
 
   const configuredKey = async () => (await settings.get()).linearApiKey?.trim() || null;
   const getClient = async () => {
@@ -46,18 +45,23 @@ export function registerLinearIntegration(
     updateIssue: async (id, input, signal) => (await getClient()).updateIssue(id, input, signal),
     createComment: async (id, body, signal) => (await getClient()).createComment(id, body, signal),
   };
-  const getService = () => service ??= createLinearSyncService({
-    client: proxy, mappings, store,
+  const service = createLinearSyncService({
+    // Resolve once at the start of a flight so key rotation cannot mix clients.
+    client: getClient, mappings, store,
     publishProjectChanged: (id) => publishProjectsChanged(bb, id),
     publishTaskChanged: (taskId, projectId) => publishTasksChanged(bb, taskId, projectId),
     warn: (message) => bb.log.warn(message),
   });
-  settings.onChange(() => { client = null; service = null; });
+  const mutations = createLinearMutationBridge({ client: proxy, mappings });
+  settings.onChange(() => {
+    client = null;
+    mutations.clearWorkflowStateCache();
+  });
 
-  const sync = async () => {
+  const sync = async (signal?: AbortSignal) => {
     if (!await configuredKey()) throw needsConfiguration("Configure the Linear API key and reload the plugin.");
-    const result = await getService().sync();
-    if (getService().rejectedCredentials())
+    const result = await service.sync(signal);
+    if (service.rejectedCredentials())
       bb.status.needsConfiguration("The Linear API key was rejected. Configure a valid key and reload the plugin.");
     bb.realtime.publish("linear:changed", null);
     return result;
@@ -69,10 +73,10 @@ export function registerLinearIntegration(
         throw needsConfiguration("Configure the Linear API key and reload the plugin.");
       }
       while (!signal.aborted) {
-        const status = getService().getStatus();
+        const status = service.getStatus();
         if (!status.retryAt || Date.parse(status.retryAt) <= Date.now()) {
           try {
-            const result = await sync();
+            const result = await sync(signal);
             if (!result.ok) bb.log.warn(`Linear sync failed: ${result.error?.message ?? "Unknown error"}`);
           } catch (error) {
             if ((error as { name?: string }).name === "NeedsConfigurationError") throw error;
@@ -80,6 +84,7 @@ export function registerLinearIntegration(
           }
         }
         await new Promise<void>((resolve) => {
+          if (signal.aborted) return resolve();
           const timer = setTimeout(resolve, POLL_MS);
           signal.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
         });
@@ -88,12 +93,12 @@ export function registerLinearIntegration(
   });
 
   return {
-    mutations: createLinearMutationBridge({ client: proxy, mappings }),
+    mutations,
     sync,
     async status() {
       const configured = Boolean(await configuredKey());
       if (!configured) bb.status.needsConfiguration("Configure the Linear API key and reload the plugin.");
-      return { configured, ...getService().getStatus() };
+      return { configured, ...service.getStatus() };
     },
   };
 }

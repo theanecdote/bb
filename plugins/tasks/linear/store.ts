@@ -24,6 +24,12 @@ export interface LinearSyncState {
   lastSuccessfulSyncAt: string | null;
   lastAttemptAt: string | null;
   lastError: string | null;
+  lastErrorCode:
+    | "LINEAR_MAPPING_ERROR"
+    | "LINEAR_RATE_LIMITED"
+    | "LINEAR_API_ERROR"
+    | null;
+  retryAt: string | null;
 }
 
 interface TeamRow {
@@ -48,6 +54,8 @@ interface SyncRow {
   last_successful_sync_at: string | null;
   last_attempt_at: string | null;
   last_error: string | null;
+  last_error_code: LinearSyncState["lastErrorCode"];
+  retry_at: string | null;
 }
 
 const teamFromRow = (row: TeamRow): LinearTeamMapping => ({
@@ -118,11 +126,12 @@ export function createLinearMappingStore(db: PluginDatabase) {
     "SELECT * FROM linear_issue_tasks WHERE active = 1 ORDER BY linear_issue_id",
   );
   const getSync = db.prepare<[], SyncRow>(
-    "SELECT last_successful_sync_at, last_attempt_at, last_error FROM linear_sync_state WHERE id = 1",
+    "SELECT last_successful_sync_at, last_attempt_at, last_error, last_error_code, retry_at FROM linear_sync_state WHERE id = 1",
   );
-  const updateSync = db.prepare<[string | null, string | null, string | null]>(`
+  const updateSync = db.prepare<[string | null, string | null, string | null, LinearSyncState["lastErrorCode"], string | null]>(`
     UPDATE linear_sync_state SET
-      last_successful_sync_at = ?, last_attempt_at = ?, last_error = ?
+      last_successful_sync_at = ?, last_attempt_at = ?, last_error = ?,
+      last_error_code = ?, retry_at = ?
     WHERE id = 1
   `);
 
@@ -202,6 +211,8 @@ export function createLinearMappingStore(db: PluginDatabase) {
         lastSuccessfulSyncAt: row.last_successful_sync_at,
         lastAttemptAt: row.last_attempt_at,
         lastError: row.last_error,
+        lastErrorCode: row.last_error_code,
+        retryAt: row.retry_at,
       };
     },
     updateSyncState(state: LinearSyncState) {
@@ -209,6 +220,8 @@ export function createLinearMappingStore(db: PluginDatabase) {
         state.lastSuccessfulSyncAt,
         state.lastAttemptAt,
         state.lastError,
+        state.lastErrorCode,
+        state.retryAt,
       );
       return this.getSyncState();
     },

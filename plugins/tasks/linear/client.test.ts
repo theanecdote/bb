@@ -113,6 +113,38 @@ describe("Linear GraphQL client", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
+  it("propagates cancellation to every pagination and batch request", async () => {
+    const controller = new AbortController();
+    let calls = 0;
+    const fetch = vi.fn<typeof globalThis.fetch>(async (_url, init) => {
+      calls++;
+      if (calls === 1) return response(assignedPage([issue], true, "next"));
+      expect(init?.signal?.aborted).toBe(false);
+      await new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+        queueMicrotask(() => controller.abort());
+      });
+      throw new Error("unreachable");
+    });
+    await expect(
+      createLinearClient({ apiKey: "key", fetch }).viewerAssignedIssues(controller.signal),
+    ).rejects.toMatchObject({ code: "LINEAR_API_ERROR" });
+    expect(fetch).toHaveBeenCalledTimes(2);
+
+    const alreadyAborted = AbortSignal.abort();
+    const batchFetch = vi.fn<typeof globalThis.fetch>((_url, init) => {
+      expect(init?.signal?.aborted).toBe(true);
+      return Promise.reject(new Error("aborted"));
+    });
+    await expect(
+      createLinearClient({ apiKey: "key", fetch: batchFetch }).issuesByIds(
+        Array.from({ length: 51 }, (_, index) => String(index)),
+        alreadyAborted,
+      ),
+    ).rejects.toMatchObject({ code: "LINEAR_API_ERROR" });
+    expect(batchFetch).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects more than 100 pages and more than 10,000 issues", async () => {
     let page = 0;
     const endless = createLinearClient({ apiKey: "key", fetch: async () => response(assignedPage([], true, String(++page))) });

@@ -54,6 +54,7 @@ export interface CommentMutationCommit {
 }
 
 export interface LinearMutationBridge {
+  clearWorkflowStateCache(): void;
   prepareTaskMutation(
     current: Task,
     patch: UpdateTaskInput,
@@ -126,6 +127,9 @@ export function createLinearMutationBridge(deps: {
   };
 
   return {
+    clearWorkflowStateCache() {
+      stateCache.clear();
+    },
     async prepareTaskMutation(current, patch, origin) {
       const mapping = deps.mappings.getIssueMappingByTask(current.id);
       if (!mapping || origin === "linear-sync") {

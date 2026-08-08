@@ -258,11 +258,16 @@ const MIGRATIONS = [
       id INTEGER PRIMARY KEY CHECK (id = 1),
       last_successful_sync_at TEXT,
       last_attempt_at TEXT,
-      last_error TEXT
+      last_error TEXT,
+      last_error_code TEXT CHECK (last_error_code IN (
+        'LINEAR_MAPPING_ERROR', 'LINEAR_RATE_LIMITED', 'LINEAR_API_ERROR'
+      )),
+      retry_at TEXT
     );
     INSERT INTO linear_sync_state (
-      id, last_successful_sync_at, last_attempt_at, last_error
-    ) VALUES (1, NULL, NULL, NULL);
+      id, last_successful_sync_at, last_attempt_at, last_error,
+      last_error_code, retry_at
+    ) VALUES (1, NULL, NULL, NULL, NULL, NULL);
 
     CREATE INDEX idx_linear_issue_tasks_team_active
       ON linear_issue_tasks(linear_team_id, active);
