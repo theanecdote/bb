@@ -13,6 +13,7 @@
 - Linear is authoritative for mapped issue fields.
 - Import all non-archived, incomplete issues assigned to Linear `viewer`.
 - Preserve Linear keys exactly (`PER-2165` remains `PER-2165`).
+- Treat mapped Tasks projects as import-only; local task creation is refused.
 - Store `linearApiKey` only as a BB secret setting; never log or return it.
 - Use the existing Tasks `MIGRATIONS` array; do not add another migration mechanism.
 - Update task rows only when projected values changed.
@@ -20,9 +21,61 @@
 - Write only `kind = user` comments to Linear; agent and system comments remain local.
 - Keep labels and sub-tasks local; reject attachments on mapped tasks.
 - Use initial plus five-minute polling; do not expose a webhook endpoint.
+- Await Linear network work outside synchronous better-sqlite3 transactions.
+- Use Turbo for full test, typecheck, and build runs; focused Vitest files are the only deliberate orchestration bypass.
 - Publish and install only from `https://github.com/theanecdote/bb`; never open an upstream PR.
 
 ---
+
+### Task 0: Make Tasks Runtime Plugin-ID Agnostic
+
+**Files:**
+- Modify: `plugins/tasks/server.ts`
+- Modify: `plugins/tasks/shared/contract.ts`
+- Modify: `plugins/tasks/attachments/index.ts`
+- Modify: `plugins/tasks/server.ts`
+- Modify: `plugins/tasks/views/detail/index.tsx`
+- Modify: `plugins/tasks/views/detail/description-save.ts`
+- Modify: `plugins/tasks/views/detail/attachments.tsx`
+- Modify: `plugins/tasks/delegate/index.ts`
+- Modify: `plugins/tasks/attachments/attachments.test.ts`
+- Modify: `plugins/tasks/delegate/delegate.test.ts`
+- Modify: `plugins/tasks/cli/cli.test.ts`
+
+**Interfaces:**
+- Adds RPC `pluginTransport: null -> { pluginId: string; attachmentBaseUrl: string; tokenUrl: string }`.
+- Uses `bb.pluginId` for backend HTTP paths and spawn attribution.
+- Preserves the registered CLI command name `tasks` independently of plugin ID.
+
+- [ ] **Step 1: Write alternate-ID tests**
+
+Run the plugin host as `tasks-linear`. Assert attachment URLs use
+`/api/v1/plugins/tasks-linear`, spawned threads carry
+`originPluginId: "tasks-linear"`, the nav/RPC surfaces load, and the CLI command
+is still `bb tasks`.
+
+- [ ] **Step 2: Run focused tests and verify failure**
+
+Run: `pnpm --filter bb-plugin-tasks exec vitest run --config vitest.config.ts attachments/attachments.test.ts delegate/delegate.test.ts cli/cli.test.ts`
+
+Expected: FAIL on hard-coded `tasks` paths or attribution.
+
+- [ ] **Step 3: Implement runtime identity plumbing**
+
+Build transport URLs from `bb.pluginId` in the backend and return only safe
+paths through `pluginTransport`; keep token retrieval on the existing local
+token endpoint. Pass transport values into frontend attachment functions.
+Remove explicit `originPluginId: "tasks"` so SDK attribution uses the owning
+runtime plugin ID.
+
+- [ ] **Step 4: Run focused tests and commit**
+
+Run: `pnpm --filter bb-plugin-tasks exec vitest run --config vitest.config.ts attachments/attachments.test.ts delegate/delegate.test.ts cli/cli.test.ts`
+
+```bash
+git add plugins/tasks
+git commit -m "Make Tasks plugin identity portable"
+```
 
 ### Task 1: Linear GraphQL Client
 
@@ -38,7 +91,7 @@
 
 - [ ] **Step 1: Write transport tests with a fake `fetch`**
 
-Cover personal-key `Authorization`, JSON content type, a 10-second abort timeout, HTTP 401, HTTP 429, HTTP 5xx, malformed JSON, GraphQL `errors` on HTTP 200, and responses containing both `data` and `errors`. Assert no thrown error contains the API key or GraphQL variables.
+Cover personal-key `Authorization`, JSON content type, a 10-second abort timeout, HTTP 401, HTTP 429, HTTP 5xx, malformed JSON, GraphQL `errors` on HTTP 200, and responses containing both `data` and `errors`. Assert no thrown error contains the API key or GraphQL variables. For 429, assert `Retry-After` and Linear reset headers are parsed into a safe `retryAt` timestamp.
 
 ```ts
 const client = createLinearClient({
@@ -59,7 +112,7 @@ Expected: FAIL because `linear/client.ts` does not exist.
 
 - [ ] **Step 3: Implement bounded GraphQL transport and schemas**
 
-Use operation names and variables, never string interpolation. Parse every response with Zod. Treat any non-empty GraphQL `errors` array as a complete failure. Map `429` to `LINEAR_RATE_LIMITED`; map authentication, timeout, protocol, and GraphQL failures to `LINEAR_API_ERROR` with safe messages.
+Use operation names and variables, never string interpolation. Parse every response with Zod. Treat any non-empty GraphQL `errors` array as a complete failure. Map `429` to `LINEAR_RATE_LIMITED` with `retryAt`; map authentication, timeout, protocol, and GraphQL failures to `LINEAR_API_ERROR` with safe messages. `issuesByIds` uses `includeArchived: true` and returns `archivedAt`, `assignee.id`, `team.id/key`, and `state.id/type/position`. The active viewer query keeps archived resources excluded.
 
 ```ts
 export interface LinearClient {
@@ -77,9 +130,9 @@ Assert assigned issues follow `pageInfo.endCursor` until `hasNextPage` is false,
 
 - [ ] **Step 5: Run focused tests and typecheck**
 
-Run: `pnpm --filter bb-plugin-tasks test -- linear/client.test.ts`
+Run: `pnpm --filter bb-plugin-tasks exec vitest run --config vitest.config.ts linear/client.test.ts`
 
-Run: `pnpm --filter bb-plugin-tasks typecheck`
+Run: `pnpm exec turbo run typecheck --filter=bb-plugin-tasks`
 
 Expected: PASS.
 
@@ -104,16 +157,17 @@ git commit -m "Add bounded Linear GraphQL client"
 - Produces: `LinearMappingStore` with team mapping, issue mapping, active marker, state ID, URL, identifier, remote timestamp, and sync-state methods.
 - Extends: `TasksStore.createTask` with optional explicit `number` and safe `next_task_number` advancement.
 - Produces: `TasksStore.updateTaskIfChanged` returning `{ task, changed }`.
+- Produces: `LinearMappingStore.isMappedProject(projectId)` for import-only enforcement.
 
 - [ ] **Step 1: Write migration and identity tests**
 
 Append one migration that creates `linear_team_projects`, `linear_issue_tasks`, and singleton `linear_sync_state`. Add uniqueness and cascading foreign keys for Linear team ID, issue ID, task ID, and Tasks project ID.
 
-Assert an explicit imported task number creates `PER-2165`, advances `next_task_number` to at least 2166, and a second import of the same issue returns its existing mapping.
+Assert an explicit imported task number creates `PER-2165`, advances `next_task_number` to at least 2166, and a second import of the same issue returns its existing mapping. Assert the mapping store distinguishes mapped and unmapped projects; Task 4 applies the domain-level creation refusal.
 
 - [ ] **Step 2: Run DB tests and verify failure**
 
-Run: `pnpm --filter bb-plugin-tasks test -- db.test.ts linear/store.test.ts`
+Run: `pnpm --filter bb-plugin-tasks exec vitest run --config vitest.config.ts db.test.ts linear/store.test.ts`
 
 Expected: FAIL because the migration and store methods are absent.
 
@@ -139,7 +193,7 @@ Compare normalized values before issuing SQL `UPDATE`. Assert a no-op update lea
 
 - [ ] **Step 5: Run DB and mapping tests**
 
-Run: `pnpm --filter bb-plugin-tasks test -- db.test.ts linear/store.test.ts`
+Run: `pnpm --filter bb-plugin-tasks exec vitest run --config vitest.config.ts db.test.ts linear/store.test.ts`
 
 Expected: PASS.
 
@@ -165,21 +219,21 @@ git commit -m "Add durable Linear task mappings"
 
 - [ ] **Step 1: Write mapping and idempotency tests**
 
-Cover priority, due date, workflow type, team project creation, exact identifier number, duplicate sync, changed-field refresh, and no-op revision preservation. Verify a pre-existing unmapped project with the same team prefix yields `LINEAR_MAPPING_ERROR` without importing partial team data.
+Cover priority, due date, `triage/backlog/unstarted/started/completed/canceled/duplicate` workflow types, unknown-state fallback with one log per state ID, team project creation, exact identifier number, duplicate sync, changed-field refresh, and no-op revision preservation. Verify a pre-existing unmapped project with the same team prefix or a team key outside `PROJECT_PREFIX_PATTERN` yields `LINEAR_MAPPING_ERROR` without importing partial team data.
 
 - [ ] **Step 2: Run sync tests and verify failure**
 
-Run: `pnpm --filter bb-plugin-tasks test -- linear/sync.test.ts`
+Run: `pnpm --filter bb-plugin-tasks exec vitest run --config vitest.config.ts linear/sync.test.ts`
 
 Expected: FAIL because `createLinearSyncService` is absent.
 
 - [ ] **Step 3: Implement active projection transaction**
 
-For each complete assigned snapshot, group by Linear team, validate every prefix before mutations, create/reuse mapped projects, create/reuse tasks, update only changed fields, and update mapping state in the same transaction. Publish `projects:changed` and `tasks:changed` only for actual changes.
+For each complete assigned snapshot, group by Linear team, validate every prefix before mutations, create/reuse mapped projects with `DEFAULT_COLOR` from `views/manage/shared.tsx`, create/reuse tasks, update only changed fields, and update mapping state in the same transaction. If remote `updatedAt` is unchanged, skip projection but refresh mapping liveness. Never overwrite a user-changed project color. Publish `projects:changed` and `tasks:changed` only for actual changes.
 
 - [ ] **Step 4: Write reconciliation tests**
 
-Cover missing mapped IDs fetched in batches: completed becomes `done`, canceled becomes `canceled`, unassigned/archived becomes inactive without local status mutation, and later reassignment reactivates the same task. Assert failed or partial active fetch performs no reconciliation.
+Cover missing mapped IDs fetched with archived resources included and apply precedence: completed becomes `done`; canceled or duplicate becomes `canceled`; only then unassigned/archived becomes inactive without local status mutation. A completed+archived issue becomes `done`. Later reassignment reactivates the same task. A cross-team move inactivates the old mapping and imports a new task under the new team while preserving the old task. Assert failed or partial active fetch performs no reconciliation.
 
 - [ ] **Step 5: Implement state-ID merge semantics**
 
@@ -191,7 +245,7 @@ Two concurrent `sync()` calls must return the same promise and execute one activ
 
 - [ ] **Step 7: Run focused tests and commit**
 
-Run: `pnpm --filter bb-plugin-tasks test -- linear/sync.test.ts`
+Run: `pnpm --filter bb-plugin-tasks exec vitest run --config vitest.config.ts linear/sync.test.ts`
 
 ```bash
 git add plugins/tasks/linear/sync.ts plugins/tasks/linear/sync.test.ts plugins/tasks/api/index.ts
@@ -211,29 +265,29 @@ git commit -m "Project assigned Linear issues into Tasks"
 - Modify: `plugins/tasks/attachments/attachments.test.ts`
 
 **Interfaces:**
-- Produces: `LinearMutationBridge.beforeTaskMutation(current, patch)`.
-- Produces: `LinearMutationBridge.beforeUserComment(taskId, body)`.
+- Produces: `LinearMutationBridge.prepareTaskMutation(current, patch, origin): Promise<TaskMutationCommit>`; callers await preparation outside a transaction and invoke its synchronous `commit(store)` inside the local transaction.
+- Produces: the same two-phase shape for `prepareUserComment`.
 - Produces: `LinearMutationBridge.assertAttachmentAllowed(taskId)`.
 - Produces: `TaskMutationOrigin = "user" | "cli" | "delegation" | "agent" | "linear-sync"`; only `linear-sync` bypasses outbound Linear mutation.
 - Changes: API `updateTask` and `boardMove` handlers become async and invoke the bridge before local mutation.
 
 - [ ] **Step 1: Write status and editable-field mutation tests**
 
-Cover RPC update, board move, CLI update, delegation `todo -> in_progress`, and agent CLI `in_review`. Assert `issueUpdate` succeeds before the local transaction and a rejected Linear mutation leaves BB unchanged.
+Cover RPC update, board move, CLI update, delegation `todo -> in_progress`, and agent CLI `in_review`. Assert `issueUpdate` succeeds before the local transaction and a rejected Linear mutation leaves BB unchanged. Assert mapped delegation never returns a promise from `store.transaction`; when Linear rejects after thread spawn, the thread remains attached and local status stays unchanged with a safe mapping error. Assert ten edits inside the mapped ten-second description window produce one RPC/Linear update, blur flushes immediately, and failure does not retry at 800 ms.
 
 - [ ] **Step 2: Run mutation tests and verify failure**
 
-Run: `pnpm --filter bb-plugin-tasks test -- linear/mutations.test.ts cli/cli.test.ts delegate/delegate.test.ts`
+Run: `pnpm --filter bb-plugin-tasks exec vitest run --config vitest.config.ts linear/mutations.test.ts cli/cli.test.ts delegate/delegate.test.ts`
 
 Expected: FAIL because direct write paths bypass the bridge.
 
 - [ ] **Step 3: Implement workflow-state resolution and issue updates**
 
-Cache each team's workflow states for one sync interval. Map BB statuses by Linear workflow type; resolve `in_review` by case-insensitive exact name first, then the first stable started state. On success, save the returned state ID/remote timestamp in the mapping.
+Cache each team's workflow states for one sync interval. Map BB statuses by Linear workflow type; resolve `in_review` by case-insensitive exact name first, then lowest `position` and ID among started states. On success, return a synchronous mapping-state commit. `parentTaskId` and `labelIds` remain local and are never forwarded or blocked. In the detail saver, use a ten-second debounce for mapped descriptions, preserve 800 ms for unmapped tasks, flush mapped drafts on blur/unmount, and do not retry failed mapped saves sooner than ten seconds.
 
 - [ ] **Step 4: Route direct status paths through the bridge**
 
-Update `api` board/update handlers and delegation's automatic status transition. Preserve system comments and realtime notifications after successful local commit. Add a regression search/test that the known mapped-task status paths no longer call `store.tasks.updateTask` directly.
+Update API edit and board handlers plus delegation's automatic transition. Preserve system comments and realtime notifications after successful local commit. Add regression tests enumerating `store.tasks.updateTask`, `store.tasks.updatePosition`, and `store.tasks.createTask`. Cover `api/index.ts` update, board `updatePosition`, delegation, attachment description rewrite, and mapped-project task creation. CLI update/comment already use shared handlers and need no duplicate bridge.
 
 Inbound projection calls the same domain mutation boundary with origin
 `linear-sync`; that origin applies the change-aware local update without
@@ -241,18 +295,18 @@ echoing an `issueUpdate` mutation back to Linear.
 
 - [ ] **Step 5: Implement user-comment and attachment policy**
 
-Call `commentCreate` before storing mapped `kind = user` comments. Do not call it for `agent` or `system`. Reject mapped-task attachment creation before writing a blob or modifying description; leave unmapped attachment behavior unchanged.
+Prepare `commentCreate` before storing mapped `kind = user` comments. Do not call it for `agent` or `system`. Reject task and comment attachments on mapped tasks before writing a blob or modifying description. Reject a mapped user comment body containing a BB attachment URL. Leave unmapped attachment behavior unchanged.
 
 - [ ] **Step 6: Run mutation, CLI, delegation, and attachment tests**
 
-Run: `pnpm --filter bb-plugin-tasks test -- linear/mutations.test.ts cli/cli.test.ts delegate/delegate.test.ts attachments/attachments.test.ts`
+Run: `pnpm --filter bb-plugin-tasks exec vitest run --config vitest.config.ts linear/mutations.test.ts cli/cli.test.ts delegate/delegate.test.ts attachments/attachments.test.ts views/detail/description-save.test.ts`
 
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add plugins/tasks/api plugins/tasks/linear/mutations.ts plugins/tasks/linear/mutations.test.ts plugins/tasks/delegate plugins/tasks/attachments plugins/tasks/cli/cli.test.ts
+git add plugins/tasks/api plugins/tasks/linear/mutations.ts plugins/tasks/linear/mutations.test.ts plugins/tasks/delegate plugins/tasks/attachments plugins/tasks/cli/cli.test.ts plugins/tasks/server.ts plugins/tasks/views/detail
 git commit -m "Write mapped task changes back to Linear"
 ```
 
@@ -265,6 +319,7 @@ git commit -m "Write mapped task changes back to Linear"
 - Modify: `plugins/tasks/server.test.ts`
 - Modify: `plugins/tasks/shared/contract.ts`
 - Modify: `plugins/tasks/shell/data.ts`
+- Create: `plugins/tasks/shell/data.test.ts`
 
 **Interfaces:**
 - Adds secret setting `linearApiKey`.
@@ -275,35 +330,82 @@ git commit -m "Write mapped task changes back to Linear"
 
 - [ ] **Step 1: Write plugin-host registration tests**
 
-Assert the secret descriptor is registered with `secret: true`, RPC output never contains the key, missing/unauthorized credentials call `bb.status.needsConfiguration`, and configured startup registers one abortable background service.
+Assert the secret descriptor is registered with `secret: true`, RPC output never contains the key, missing/unauthorized credentials call `bb.status.needsConfiguration`, and configured startup registers one abortable background service. Assert an ordinary rejected sync is caught, the next tick still runs, and the exact existing server log assertion is updated intentionally rather than hidden by extra load-time logging.
 
 - [ ] **Step 2: Run tests and verify failure**
 
-Run: `pnpm --filter bb-plugin-tasks test -- server.test.ts linear/index.test.ts`
+Run: `pnpm --filter bb-plugin-tasks exec vitest run --config vitest.config.ts server.test.ts linear/index.test.ts`
 
 Expected: FAIL because Linear settings and RPC methods are absent.
 
 - [ ] **Step 3: Implement lifecycle registration**
 
-Create the client/service lazily from `settings.get()` inside handlers/service start. The service runs one sync, then waits five minutes with an abort-aware timer. Manual and background calls use the sync service's shared in-flight promise.
+Create the client/service lazily from `settings.get()`. Register `settings.onChange` to discard the cached client so key rotation affects the next operation. The abort-aware loop wraps ordinary `sync()` errors, records/logs them safely, waits five minutes, and continues; only missing/rejected credentials throw `NeedsConfigurationError`. Manual/background calls share one promise. A rate-limit `retryAt` suppresses scheduled sync until that instant and appears in status.
 
 - [ ] **Step 4: Extend the strict RPC contract and frontend hooks**
 
-Add Zod schemas for configured state, viewer name, active issue count, last success, safe error, sync counts, and mapping source metadata. Add `linear:changed` to invalidation channels and `useLinearStatus()` to `shell/data.ts`.
+Add Zod schemas for configured state, viewer name, active issue count, last success, safe error, retry time, sync counts, and mapping source metadata. Extend task-domain error codes with `linear_write_failed`, `linear_rate_limited`, `linear_mapping_error`, and `linear_project_readonly`; bridge failures return typed mutation results. Add `linearSource: { identifier, url } | null` to strict task schemas, resolved by one batched mapping query per task page rather than N+1; assert a 100-task page performs one mapping query. Add `linear:changed` to `INVALIDATION_CHANNELS` and a matching `useRealtime` subscription, then add `useLinearStatus()`.
 
-- [ ] **Step 5: Run server tests and typecheck**
+- [ ] **Step 5: Make frontend full-list pagination restart-safe**
 
-Run: `pnpm --filter bb-plugin-tasks test -- server.test.ts linear/index.test.ts`
+Update `listAllTasks` to restart from a cursor-less request on typed
+`stale_cursor`, bounded to three attempts. Test a revision bump between pages
+returns one clean complete list without an infinite retry.
 
-Run: `pnpm --filter bb-plugin-tasks typecheck`
+- [ ] **Step 6: Run server tests and typecheck**
+
+Run: `pnpm --filter bb-plugin-tasks exec vitest run --config vitest.config.ts server.test.ts linear/index.test.ts shell/data.test.ts`
+
+Run: `pnpm exec turbo run typecheck --filter=bb-plugin-tasks`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add plugins/tasks/server.ts plugins/tasks/server.test.ts plugins/tasks/shared/contract.ts plugins/tasks/shell/data.ts plugins/tasks/linear/index.ts plugins/tasks/linear/index.test.ts
+git add plugins/tasks/server.ts plugins/tasks/server.test.ts plugins/tasks/shared/contract.ts plugins/tasks/shell/data.ts plugins/tasks/shell/data.test.ts plugins/tasks/linear/index.ts plugins/tasks/linear/index.test.ts
 git commit -m "Register Linear sync lifecycle"
+```
+
+### Task 5b: CLI and Discoverable Surfaces
+
+**Files:**
+- Modify: `plugins/tasks/cli/index.ts`
+- Modify: `plugins/tasks/cli/cli.test.ts`
+- Modify: `plugins/tasks/skills/tasks/SKILL.md`
+- Modify: `docs/configuration.md`
+- Modify: `packages/templates/src/templates/bb-guide-plugins.md`
+- Modify: `apps/server/src/services/skills/builtin-skills/bb-cli/SKILL.md`
+
+**Interfaces:**
+- Adds `bb tasks linear status [--json]`.
+- Adds `bb tasks linear sync [--json]`.
+- Neither command accepts or prints a credential.
+
+- [ ] **Step 1: Write CLI tests**
+
+Assert human and JSON status output, manual sync output, safe typed failures,
+and rejection of unknown/key-like arguments.
+
+- [ ] **Step 2: Implement commands using the same service handlers as RPC**
+
+Register both under the existing `tasks` CLI registration. Do not duplicate
+sync logic in the CLI parser.
+
+- [ ] **Step 3: Update skill and configuration discovery**
+
+Document Linear-owned fields, import-only mapped projects, attachment refusal,
+and that `bb tasks comment` posts user comments to Linear. Document
+`linearApiKey` and test-only `LINEAR_SMOKE_API_KEY`. Regenerate templates with
+`node packages/templates/scripts/generate-templates.mjs`.
+
+- [ ] **Step 4: Verify and commit**
+
+Run: `pnpm --filter bb-plugin-tasks exec vitest run --config vitest.config.ts cli/cli.test.ts`
+
+```bash
+git add plugins/tasks/cli plugins/tasks/skills docs/configuration.md packages/templates apps/server/src/services/skills/builtin-skills/bb-cli/SKILL.md
+git commit -m "Expose Linear Tasks sync to agents"
 ```
 
 ### Task 6: Native Tasks UI
@@ -314,6 +416,8 @@ git commit -m "Register Linear sync lifecycle"
 - Modify: `plugins/tasks/shell/sidebar.tsx`
 - Modify: `plugins/tasks/shell/app-shell.tsx`
 - Modify: `plugins/tasks/views/detail/index.tsx`
+- Modify: `plugins/tasks/views/board/index.tsx`
+- Create: `plugins/tasks/views/board/board.test.tsx`
 - Modify: `plugins/tasks/shell/shell.test.tsx`
 - Modify: `plugins/tasks/app.css`
 
@@ -324,11 +428,11 @@ git commit -m "Register Linear sync lifecycle"
 
 - [ ] **Step 1: Write component tests**
 
-Cover not configured, connected, syncing, failed, disabled duplicate-click, refresh success, mapped task source action, and unmapped task without Linear UI.
+Cover not configured, connected, syncing, rate-limit resume time, failed, disabled duplicate-click, refresh success, mapped task source action, and unmapped task without Linear UI. A board drag rejected by Linear must revert and show the typed error.
 
 - [ ] **Step 2: Run UI tests and verify failure**
 
-Run: `pnpm --filter bb-plugin-tasks test -- shell/linear-status.test.tsx shell/shell.test.tsx`
+Run: `pnpm --filter bb-plugin-tasks exec vitest run --config vitest.config.ts shell/linear-status.test.tsx shell/shell.test.tsx views/board/board.test.tsx`
 
 Expected: FAIL because the status component is absent.
 
@@ -342,11 +446,13 @@ Render the Linear identifier as a restrained source row and open the canonical H
 
 - [ ] **Step 5: Run UI tests, full Tasks tests, and build**
 
-Run: `pnpm --filter bb-plugin-tasks test`
+Run: `pnpm exec turbo run test --filter=bb-plugin-tasks > "$BB_THREAD_STORAGE/tasks-test.log" 2>&1`
 
-Run: `pnpm --filter bb-plugin-tasks typecheck`
+Run: `tail -200 "$BB_THREAD_STORAGE/tasks-test.log"`
 
-Run: `pnpm --filter bb-plugin-tasks build`
+Run: `pnpm exec turbo run typecheck --filter=bb-plugin-tasks`
+
+Run: `pnpm exec turbo run build --filter=bb-plugin-tasks`
 
 Expected: PASS with rebuilt `plugins/tasks/dist` artifacts.
 
@@ -366,7 +472,7 @@ git commit -m "Add native Linear status to Tasks"
 
 **Interfaces:**
 - Adds opt-in environment variable `LINEAR_SMOKE_API_KEY` for a read-only developer smoke test only; production still uses the BB secret setting.
-- Produces a self-contained `distribution/tasks-linear` branch rooted at the Tasks plugin package.
+- Produces a self-contained `distribution/tasks-linear` branch whose package name is `bb-plugin-tasks-linear` and whose metadata plugin ID is `tasks-linear`.
 
 - [ ] **Step 1: Add the opt-in read-only smoke test**
 
@@ -374,19 +480,21 @@ When `LINEAR_SMOKE_API_KEY` is absent, skip. When present, resolve viewer and fe
 
 - [ ] **Step 2: Run complete verification**
 
-Run: `pnpm --filter bb-plugin-tasks test`
+Run: `pnpm exec turbo run test --filter=bb-plugin-tasks > "$BB_THREAD_STORAGE/tasks-test.log" 2>&1`
 
-Run: `pnpm --filter bb-plugin-tasks typecheck`
+Run: `tail -200 "$BB_THREAD_STORAGE/tasks-test.log"`
 
-Run: `pnpm --filter bb-plugin-tasks build`
+Run: `pnpm exec turbo run typecheck --filter=bb-plugin-tasks`
+
+Run: `pnpm exec turbo run build --filter=bb-plugin-tasks`
 
 Run: `git diff --check`
 
-Expected: all pass and the worktree is clean after committing generated artifacts.
+Expected: all pass. Inspect the bounded test log, and keep ignored source build artifacts out of the feature commit.
 
 - [ ] **Step 3: Document operation and rollback**
 
-Document API-key creation, BB secret setting, reload requirement, manual sync, project linking before delegation, polling behavior, mapped-task attachment restriction, and rollback. State that uninstall preserves same-id KV/data DB but removes settings and secrets.
+Document API-key creation, BB secret setting, healthy-key rotation, manual sync, project linking before delegation, import-only mapped projects, polling/rate-limit behavior, mapped task/comment attachment restriction, flattened sub-issues, and rollback. State that `tasks-linear` owns separate data from disabled builtin `tasks`.
 
 - [ ] **Step 4: Commit and publish the feature PR to the personal fork**
 
@@ -403,11 +511,11 @@ Verify the PR base repository is `theanecdote/bb`, checks pass, and no upstream 
 
 - [ ] **Step 6: Build and push the distribution branch**
 
-Create an isolated export containing `plugins/tasks` package contents at repository root, including metadata-validated `dist/server.js`, `dist/app.js`, CSS, source maps, logos, skills, README, and package manifest. Push it as `distribution/tasks-linear` to `theanecdote/bb`.
+In an isolated distribution worktree, change the exported package name to `bb-plugin-tasks-linear` and display name to `Tasks + Linear`, run `bb plugin build plugins/tasks` so metadata is stamped for `tasks-linear`, restore no files into the feature branch, and create an orphan export rooted at the package contents. Force-add ignored `dist/server.js`, `dist/app.js`, CSS, maps, and both metadata files alongside source, logos, skills, README, and manifest. Verify `server.meta.json` and `app.meta.json` both declare `pluginId: "tasks-linear"`, then push only to `theanecdote/bb:distribution/tasks-linear`.
 
 - [ ] **Step 7: Replace and configure Tasks**
 
-Record current plugin status, remove the disabled builtin `tasks`, install `git:https://github.com/theanecdote/bb.git@distribution/tasks-linear`, and request `linearApiKey` through BB's plugin secret settings UI. Never pass the key in CLI argv or chat. Reload and enable `tasks`.
+Confirm builtin `tasks` remains disabled, install `git:https://github.com/theanecdote/bb.git@distribution/tasks-linear`, and verify the installed ID is `tasks-linear` while the registered CLI remains `bb tasks`. Request `linearApiKey` through BB's plugin secret settings UI; never pass it in CLI argv or chat. Reload and enable `tasks-linear`.
 
 - [ ] **Step 8: Perform the live read-only sync smoke test**
 
@@ -415,4 +523,4 @@ Run manual sync, confirm the authenticated viewer, confirm assigned incomplete P
 
 - [ ] **Step 9: Final safety checks**
 
-Confirm no upstream PR, no webhook/public share, no secret in git/logs/RPC, no duplicate tasks, and no unintended Linear comments or state changes.
+Confirm no upstream PR, no webhook/public share, no secret in git/logs/RPC, no duplicate tasks, no CLI collision with disabled builtin Tasks, and no unintended Linear comments or state changes. Rollback disables/removes `tasks-linear` and re-enables `builtin:tasks`; it does not migrate replacement data.
