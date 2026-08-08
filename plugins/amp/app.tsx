@@ -23,6 +23,7 @@ import {
 import {
   applyRefreshedLink,
   createLoadSequencer,
+  isFollowupSubmitKey,
   isLiveState,
   mergeTranscript,
   nextPollDelay,
@@ -218,6 +219,19 @@ function AmpPanel({ threadId }: { threadId: string }) {
     }
   }
 
+  function submitFollowup() {
+    const message = followup.trim();
+    if (link === null || busy || message.length === 0) return;
+    void run(async () => {
+      await rpc.call("sendFollowup", {
+        threadId,
+        ampThreadId: link.ampThreadId,
+        message,
+      });
+      setFollowup("");
+    });
+  }
+
   const link = state?.link ?? null;
   const runs = buildRelatedRuns(state?.links ?? [], state?.acpChildren ?? []);
   const repoPath = state?.repo?.path;
@@ -388,21 +402,25 @@ function AmpPanel({ threadId }: { threadId: string }) {
             placeholder="Follow up on this Amp run…"
             value={followup}
             onChange={(event) => setFollowup(event.target.value)}
+            onKeyDown={(event) => {
+              if (
+                !isFollowupSubmitKey({
+                  key: event.key,
+                  metaKey: event.metaKey,
+                  ctrlKey: event.ctrlKey,
+                  isComposing: event.nativeEvent.isComposing,
+                })
+              )
+                return;
+              event.preventDefault();
+              submitFollowup();
+            }}
           />
           <div className="flex justify-end">
             <Button
               size="sm"
               disabled={busy || followup.trim().length === 0}
-              onClick={() =>
-                void run(async () => {
-                  await rpc.call("sendFollowup", {
-                    threadId,
-                    ampThreadId: link.ampThreadId,
-                    message: followup.trim(),
-                  });
-                  setFollowup("");
-                })
-              }
+              onClick={submitFollowup}
             >
               Send
             </Button>
