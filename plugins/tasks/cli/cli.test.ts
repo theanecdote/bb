@@ -89,6 +89,88 @@ function stdout(result: {
 }
 
 describe("bb tasks CLI", () => {
+  it("reports Linear status and sync in human and JSON forms without accepting or exposing keys", async () => {
+    const secret = "lin_api_do-not-print";
+    const fetch = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          data: {
+            viewer: {
+              id: "viewer-1",
+              name: "Ada",
+              assignedIssues: {
+                nodes: [],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            },
+          },
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetch);
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "tasks",
+      settings: { linearApiKey: secret },
+    });
+    await plugin(bb);
+
+    expect(stdout(await harness.runCli(["linear", "status"]))).toMatch(
+      /^Configured\s+true/mu,
+    );
+    expect(
+      JSON.parse(stdout(await harness.runCli(["linear", "status", "--json"]))),
+    ).toMatchObject({ configured: true, syncing: false, activeIssueCount: 0 });
+
+    expect(stdout(await harness.runCli(["linear", "sync"]))).toMatch(
+      /^OK\s+true/mu,
+    );
+    expect(
+      JSON.parse(stdout(await harness.runCli(["linear", "sync", "--json"]))),
+    ).toMatchObject({
+      ok: true,
+      createdProjects: 0,
+      createdTasks: 0,
+      updatedTasks: 0,
+      deactivatedTasks: 0,
+    });
+
+    for (const argv of [
+      ["linear", "status", "extra"],
+      ["linear", "sync", "--api-key", secret],
+      ["linear", "sync", "--linearApiKey", secret],
+    ]) {
+      const result = await harness.runCli(argv);
+      expect(result.exitCode).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).not.toContain(secret);
+    }
+
+    await harness.dispose();
+    vi.unstubAllGlobals();
+  });
+
+  it("prints only typed safe Linear failures", async () => {
+    const secret = "lin_api_never-leak";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(`rejected ${secret}`, { status: 401 })),
+    );
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "tasks",
+      settings: { linearApiKey: secret },
+    });
+    await plugin(bb);
+
+    const result = await harness.runCli(["linear", "sync", "--json"]);
+    expect(JSON.parse(stdout(result))).toMatchObject({
+      ok: false,
+      error: { code: "LINEAR_API_ERROR" },
+    });
+    expect(result.stdout).not.toContain(secret);
+
+    await harness.dispose();
+    vi.unstubAllGlobals();
+  });
+
   it("lists seed-demo in help while retaining the explicit confirmation guard", async () => {
     const { bb, harness } = createFakePluginHost({
       pluginId: "tasks-linear",

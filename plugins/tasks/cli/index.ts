@@ -49,6 +49,7 @@ import {
 } from "./args";
 import { bytes, detail, json, table } from "./format";
 import { seedDemo } from "./seed";
+import type { LinearRuntime } from "../linear";
 
 const ULID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
 const TASK_KEY_PATTERN = /^([A-Z][A-Z0-9]{0,9})-(\d+)$/;
@@ -60,6 +61,7 @@ const ROOT_HELP = `Usage: bb tasks <command> [options]
 
 Commands:
   status                         Show plugin status
+  linear status|sync             Inspect or run Linear synchronization
   project create|list|show|update
   folder create|list|update
   create                         Create a task
@@ -76,6 +78,10 @@ Commands:
   seed-demo                      Create sample data (requires --yes)
 
 Run bb tasks <command> --help for command usage.`;
+
+const LINEAR_HELP = `Usage:
+  bb tasks linear status [--json]
+  bb tasks linear sync [--json]`;
 
 const PROJECT_HELP = `Usage:
   bb tasks project create --name <name> [--prefix X] [--folder <id-or-name>] [--link-bb-project <proj_id>] [--color <color>] [--json]
@@ -1871,8 +1877,11 @@ export function registerTasksCli(
   bb: BbPluginApi,
   store: TasksApiStore,
   status: PluginStatus,
+  linear: LinearRuntime,
 ): void {
-  const domain = registerHandlers(bb, store);
+  // Use the RPC service handlers here as well so CLI and UI behavior cannot
+  // drift (including safe error mapping and single-flight synchronization).
+  const domain = registerHandlers(bb, store, undefined, linear);
   bb.cli.register({
     name: "tasks",
     summary:
@@ -1882,6 +1891,11 @@ export function registerTasksCli(
         name: "status",
         summary: "Show the Tasks plugin name and version",
         usage: "bb tasks status [--json]",
+      },
+      {
+        name: "linear",
+        summary: "Inspect or run Linear synchronization",
+        usage: LINEAR_HELP,
       },
       {
         name: "project",
@@ -1969,6 +1983,45 @@ export function registerTasksCli(
             stdout = args.flags.has("json")
               ? JSON.stringify(status)
               : `${status.name} ${status.version}`;
+            break;
+          }
+          case "linear": {
+            const args = parseArgs(rest);
+            assertAllowed(args, []);
+            const [action] = requirePositionals(args, 1, LINEAR_HELP);
+            if (action === "status") {
+              const result = tasksRpcContract.linearStatus.output.parse(
+                await domain.linearStatus(null),
+              );
+              stdout = args.flags.has("json")
+                ? json(result)
+                : detail([
+                    ["Configured", result.configured],
+                    ["Syncing", result.syncing],
+                    ["Viewer", result.viewerName ?? "-"],
+                    ["Active issues", result.activeIssueCount],
+                    ["Last successful sync", result.lastSuccessfulSyncAt ?? "-"],
+                    ["Last attempt", result.lastAttemptAt ?? "-"],
+                    ["Retry at", result.retryAt ?? "-"],
+                    ["Last error", result.lastError ? `${result.lastError.code}: ${result.lastError.message}` : "-"],
+                  ]);
+            } else if (action === "sync") {
+              const result = tasksRpcContract.linearSyncNow.output.parse(
+                await domain.linearSyncNow(null),
+              );
+              stdout = args.flags.has("json")
+                ? json(result)
+                : detail([
+                    ["OK", result.ok],
+                    ["Created projects", result.createdProjects],
+                    ["Created tasks", result.createdTasks],
+                    ["Updated tasks", result.updatedTasks],
+                    ["Deactivated tasks", result.deactivatedTasks],
+                    ["Error", result.error ? `${result.error.code}: ${result.error.message}` : "-"],
+                  ]);
+            } else {
+              throw new CliError(`unknown linear command: ${action}; run bb tasks linear --help`);
+            }
             break;
           }
           case "project":

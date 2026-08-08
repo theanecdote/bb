@@ -42,7 +42,7 @@ export default async function plugin(bb: BbPluginApi) {
   const linear = registerLinearIntegration(bb, store, mappings);
   registerTasksApi(bb, store, linear.mutations, linear);
   registerAttachments(bb, store.tasks, { mutations: linear.mutations });
-  registerTasksCli(bb, store, statusPayload());
+  registerTasksCli(bb, store, statusPayload(), linear);
   registerDelegation(bb, store, linear.mutations);
   registerMentions(bb, store);
   await registerLifecycle(bb, store);

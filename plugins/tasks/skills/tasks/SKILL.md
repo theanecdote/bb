@@ -8,6 +8,21 @@ description: Use when asked to work on or track a task in the Tasks plugin, when
 Use the `bb tasks` CLI to understand the assigned task, keep its record useful,
 and report the outcome where the work is tracked.
 
+## Linear-backed tasks
+
+Use `bb tasks linear status [--json]` to inspect the connection and `bb tasks
+linear sync [--json]` to request a sync. These commands never accept a Linear
+API key; configuration belongs in the plugin's secret `linearApiKey` setting.
+
+Linear-backed projects are import-only: do not create local tasks in them.
+Linear owns task numbers, keys, title, description, priority, due date, and
+workflow status; sync refreshes those fields. Labels, hierarchy, project color,
+local comments, and attached agent threads remain BB-owned. Imported projects
+must be linked to a BB project before delegation. Attachments to mapped tasks
+are refused rather than uploaded to Linear. `bb tasks comment` posts a user
+comment to the mapped Linear issue; agent/system comments and Linear's existing
+comment transcript are not copied across.
+
 Delegation presets are user-defined; Tasks ships with none. Before dispatching
 work, use `bb tasks preset list` and create a preset if the required one does
 not already exist. Dispatch requires an existing preset.

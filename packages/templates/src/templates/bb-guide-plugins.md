@@ -108,6 +108,8 @@ and the `bb tasks` command. Common agent operations are:
   bb tasks attach <key-or-id> [--json]
   bb tasks update <key-or-id> --status in_review [--json]
   bb tasks update <key-or-id> (--parent <parent-key-or-id> | --no-parent) [--json]
+  bb tasks linear status [--json]
+  bb tasks linear sync [--json]
 
 Run `bb tasks --help` for project, folder, task, label, attachment, and demo-data
 commands, plus preset management, delegation, and attached-thread inspection.
@@ -117,6 +119,14 @@ work started outside Tasks. Task update resolves both task keys and IDs for
 in tasks commands resolve on the invoking machine (the thread's machine inside
 an agent thread, otherwise the server's); pass `--machine <id-or-name>` to
 target another enrolled machine.
+Linear synchronization is configured only through the secret plugin setting
+`linearApiKey`; the Linear CLI commands neither accept nor print credentials.
+Mapped projects are import-only and must be linked to a BB project before
+delegation. Linear owns imported keys/numbers, title, description, priority,
+due date, and workflow status; BB owns labels, hierarchy, color, local comments,
+and attached threads. Mapped-task attachments are refused. `bb tasks comment`
+posts user comments to Linear, while agent/system comments and Linear's existing
+comment transcript are not mirrored.
 Task lists default to 100 rows. JSON pages include `nextCursor`; human pages
 print the exact continuation option when more rows exist. Cursors are bound to
 the filters, sort, and task-list revision. Any add, removal, reorder, update,
