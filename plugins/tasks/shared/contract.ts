@@ -123,6 +123,7 @@ export const taskSchema = z
     createdAt: z.string(),
     updatedAt: z.string(),
     labelIds: z.array(idSchema),
+    linearMapped: z.boolean(),
   })
   .strict();
 
@@ -256,6 +257,9 @@ export const tasksDomainErrorSchema = z
       "project_not_empty",
       "project_prefix_conflict",
       "attachment_referenced",
+      "linear_write_failed",
+      "mapped_project_import_only",
+      "mapped_attachment_forbidden",
     ]),
     message: z.string(),
   })

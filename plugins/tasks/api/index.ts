@@ -14,6 +14,11 @@ import {
 import { deliverCommentToLatestAgent } from "../steer";
 import { isSideChatShapedThread } from "../shared/side-chat";
 import {
+  LinearAttachmentError,
+  LinearMutationError,
+  type LinearMutationBridge,
+} from "../linear/mutations";
+import {
   tasksRpcContract,
   type Attachment as AttachmentMetadata,
   type ProjectsChangedEvent,
@@ -65,14 +70,19 @@ export interface TasksApiStore {
   projectTaskCount(projectId: string): number;
   projectPrefixExists(prefix: string, excludingProjectId: string): boolean;
   sidebarSummary(): SidebarProjectSummary[];
+  isMappedTask(taskId: string): boolean;
 }
 
-export function createStore(bb: BbPluginApi): TasksApiStore {
+export function createStore(
+  bb: BbPluginApi,
+  isMappedTask: (taskId: string) => boolean = () => false,
+): TasksApiStore {
   const database = bb.storage.database();
   const tasks = createTasksStore(database);
 
   return {
     tasks,
+    isMappedTask,
     transaction<T>(operation: () => T): T {
       return database.transaction(operation)();
     },
@@ -214,6 +224,7 @@ function apiTask(store: TasksApiStore, task: StoredTask): Task {
   return {
     ...task,
     labelIds: store.taskLabelIds([task.id]).get(task.id) ?? [],
+    linearMapped: store.isMappedTask(task.id),
   };
 }
 
@@ -222,6 +233,7 @@ function apiTasks(store: TasksApiStore, tasks: StoredTask[]): Task[] {
   return tasks.map((task) => ({
     ...task,
     labelIds: labelsByTask.get(task.id) ?? [],
+    linearMapped: store.isMappedTask(task.id),
   }));
 }
 
@@ -463,17 +475,32 @@ export async function createComment(
   bb: BbPluginApi,
   store: TasksApiStore,
   input: CreateCommentInput,
+  mutations?: LinearMutationBridge,
 ): Promise<StoredComment> {
-  let comment = store.transaction(() =>
-    store.tasks.createComment({
-      taskId: input.taskId,
-      kind: input.kind,
-      authorName: input.authorName,
-      presetName: input.presetName,
-      threadId: input.threadId,
-      body: input.body,
-      notifiedCount: 0,
-    }),
+  const prepared =
+    input.kind === "user" && mutations
+      ? await mutations.prepareUserComment(input.taskId, input.body, "user")
+      : undefined;
+  let comment = store.transaction(
+    () =>
+      prepared?.commit(store.tasks, {
+        taskId: input.taskId,
+        kind: input.kind,
+        authorName: input.authorName,
+        presetName: input.presetName,
+        threadId: input.threadId,
+        body: input.body,
+        notifiedCount: 0,
+      }) ??
+      store.tasks.createComment({
+        taskId: input.taskId,
+        kind: input.kind,
+        authorName: input.authorName,
+        presetName: input.presetName,
+        threadId: input.threadId,
+        body: input.body,
+        notifiedCount: 0,
+      }),
   );
 
   if (input.notify) {
@@ -643,6 +670,7 @@ async function listTaskPullRequests(
 export function registerHandlers(
   bb: BbPluginApi,
   store: TasksApiStore,
+  mutations?: LinearMutationBridge,
 ): PluginRpcHandlers<typeof tasksRpcContract> {
   return {
     pluginTransport() {
@@ -737,6 +765,12 @@ export function registerHandlers(
     },
     createTask(input) {
       try {
+        if (mutations?.isMappedProject(input.projectId)) {
+          fail(
+            "mapped_project_import_only",
+            "Tasks in this Linear project can only be created by import",
+          );
+        }
         validateTaskParent(store, input.projectId, input.parentTaskId);
         validateTaskLabels(store, input.projectId, input.labelIds);
         const task = store.transaction(() => {
@@ -767,7 +801,7 @@ export function registerHandlers(
       const task = store.tasks.getTaskByKey(input.taskKey);
       return { task: task ? apiTask(store, task) : null };
     },
-    updateTask(input) {
+    async updateTask(input) {
       try {
         const current = store.tasks.getTask(input.taskId);
         if (!current) throw new Error(`Task not found: ${input.taskId}`);
@@ -779,19 +813,27 @@ export function registerHandlers(
         if (input.labelIds) {
           validateTaskLabels(store, current.projectId, input.labelIds);
         }
+        const patch = {
+          title: input.title,
+          description: input.description,
+          status: input.status,
+          priority: input.priority,
+          dueDate: input.dueDate,
+          parentTaskId: input.parentTaskId,
+        };
+        const prepared = await mutations?.prepareTaskMutation(
+          current,
+          patch,
+          "user",
+        );
 
         const result = store.transaction(() => {
           const beforeLabelIds = store.tasks
             .listTaskLabels(current.id)
             .map((link) => link.labelId);
-          const updated = store.tasks.updateTask(current.id, {
-            title: input.title,
-            description: input.description,
-            status: input.status,
-            priority: input.priority,
-            dueDate: input.dueDate,
-            parentTaskId: input.parentTaskId,
-          });
+          const updated =
+            prepared?.commit(store.tasks) ??
+            store.tasks.updateTask(current.id, patch);
           if (input.labelIds) {
             replaceTaskLabels(store, current.id, input.labelIds);
           }
@@ -830,6 +872,17 @@ export function registerHandlers(
         }
         return { ok: true, task: result.task };
       } catch (error) {
+        if (
+          error instanceof LinearMutationError ||
+          error instanceof LinearAttachmentError
+        ) {
+          return taskFailure(
+            new TasksDomainFailure({
+              code: error.code,
+              message: error.message,
+            }),
+          );
+        }
         if (error instanceof TasksDomainFailure) return taskFailure(error);
         throw error;
       }
@@ -862,26 +915,43 @@ export function registerHandlers(
         nextCursor: page.nextCursor,
       };
     },
-    boardMove(input) {
-      const current = store.tasks.getTask(input.taskId);
-      if (!current) throw new Error(`Task not found: ${input.taskId}`);
-      const result = store.transaction(() => {
-        const moved = store.tasks.updatePosition(current.id, {
-          status: input.status,
-          beforeTaskId: input.beforeTaskId,
-          afterTaskId: input.afterTaskId,
+    async boardMove(input) {
+      try {
+        const current = store.tasks.getTask(input.taskId);
+        if (!current) throw new Error(`Task not found: ${input.taskId}`);
+        const prepared = await mutations?.prepareTaskMutation(
+          current,
+          { status: input.status },
+          "user",
+        );
+        const result = store.transaction(() => {
+          const moved = store.tasks.updatePosition(current.id, {
+            status: input.status,
+            beforeTaskId: input.beforeTaskId,
+            afterTaskId: input.afterTaskId,
+          });
+          prepared?.commit(store.tasks);
+          const statusChanged = moved.status !== current.status;
+          if (statusChanged) {
+            writeSystemComments(store, current.id, input.authorName, [
+              `Status changed to ${statusName(moved.status)} by ${input.authorName}`,
+            ]);
+          }
+          return { task: apiTask(store, moved), statusChanged };
         });
-        const statusChanged = moved.status !== current.status;
-        if (statusChanged) {
-          writeSystemComments(store, current.id, input.authorName, [
-            `Status changed to ${statusName(moved.status)} by ${input.authorName}`,
-          ]);
-        }
-        return { task: apiTask(store, moved), statusChanged };
-      });
-      publishTasksChanged(bb, result.task.id, result.task.projectId);
-      if (result.statusChanged) publishCommentsChanged(bb, result.task.id);
-      return { ok: true, task: result.task };
+        publishTasksChanged(bb, result.task.id, result.task.projectId);
+        if (result.statusChanged) publishCommentsChanged(bb, result.task.id);
+        return { ok: true, task: result.task };
+      } catch (error) {
+        if (error instanceof LinearMutationError)
+          return taskFailure(
+            new TasksDomainFailure({
+              code: error.code,
+              message: error.message,
+            }),
+          );
+        throw error;
+      }
     },
     createLabel(input) {
       const label = store.tasks.createLabel(input);
@@ -906,15 +976,20 @@ export function registerHandlers(
       return { labels: store.tasks.listLabels(input.projectId) };
     },
     async createComment(input) {
-      const comment = await createComment(bb, store, {
-        taskId: input.taskId,
-        kind: "user",
-        authorName: "You",
-        presetName: null,
-        threadId: null,
-        body: input.body,
-        notify: input.notify,
-      });
+      const comment = await createComment(
+        bb,
+        store,
+        {
+          taskId: input.taskId,
+          kind: "user",
+          authorName: "You",
+          presetName: null,
+          threadId: null,
+          body: input.body,
+          notify: input.notify,
+        },
+        mutations,
+      );
       return { comment };
     },
     async listComments(input) {
@@ -1110,6 +1185,10 @@ export function registerHandlers(
   };
 }
 
-export function registerTasksApi(bb: BbPluginApi, store: TasksApiStore): void {
-  bb.rpc.register(tasksRpcContract, registerHandlers(bb, store));
+export function registerTasksApi(
+  bb: BbPluginApi,
+  store: TasksApiStore,
+  mutations?: LinearMutationBridge,
+): void {
+  bb.rpc.register(tasksRpcContract, registerHandlers(bb, store, mutations));
 }

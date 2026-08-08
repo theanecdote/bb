@@ -2,6 +2,7 @@ import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import type { BbPluginApi } from "@bb/plugin-sdk";
 import type { Attachment, TasksStore } from "../db";
+import type { LinearMutationBridge } from "../linear/mutations";
 
 export const MAX_ATTACHMENT_SIZE_BYTES = 25 * 1024 * 1024;
 
@@ -363,7 +364,14 @@ export async function saveAttachmentFromBytes(
   store: TasksStore,
   bytes: Uint8Array,
   options: SaveAttachmentFromBytesOptions,
+  mutations?: LinearMutationBridge,
 ): Promise<Attachment> {
+  const taskId =
+    options.taskId ??
+    (options.commentId
+      ? store.getComment(options.commentId)?.taskId
+      : undefined);
+  if (taskId) mutations?.assertAttachmentAllowed(taskId);
   return persistAttachment(
     store,
     normalizeOwner(options.taskId, options.commentId),
@@ -412,6 +420,7 @@ export async function deleteAttachmentById(
   options: {
     removeBlobs?: typeof removeAttachmentBlobs;
     removeDescriptionReferences?: boolean;
+    mutations?: LinearMutationBridge;
   } = {},
 ): Promise<Attachment | null> {
   const attachment = store.getAttachment(attachmentId);
@@ -423,6 +432,7 @@ export async function deleteAttachmentById(
       ? store.getComment(attachment.commentId)?.taskId
       : undefined);
   const ownerTask = taskId ? store.getTask(taskId) : undefined;
+  if (taskId) options.mutations?.assertAttachmentAllowed(taskId);
   let nextDescription: string | undefined;
   if (
     ownerTask?.description.includes(
@@ -441,6 +451,14 @@ export async function deleteAttachmentById(
       throw new AttachmentReferencedError(attachment);
     }
   }
+  const descriptionCommit =
+    ownerTask && nextDescription !== undefined
+      ? await options.mutations?.prepareTaskMutation(
+          ownerTask,
+          { description: nextDescription },
+          "user",
+        )
+      : undefined;
 
   try {
     await (options.removeBlobs ?? removeAttachmentBlobs)(bb, store, [
@@ -450,7 +468,8 @@ export async function deleteAttachmentById(
     throw new AttachmentCleanupError(attachment, error);
   }
   if (ownerTask && nextDescription !== undefined) {
-    store.updateTask(ownerTask.id, { description: nextDescription });
+    descriptionCommit?.commit(store) ??
+      store.updateTask(ownerTask.id, { description: nextDescription });
   }
   if (!store.deleteAttachment(attachment.id)) return null;
   publishAttachmentChanged(bb, store, attachment);
@@ -488,6 +507,7 @@ export function registerAttachments(
   store: TasksStore,
   options: {
     removeBlobs?: typeof removeAttachmentBlobs;
+    mutations?: LinearMutationBridge;
   } = {},
 ): void {
   const root = pluginDataDirectory(bb);
@@ -499,6 +519,12 @@ export function registerAttachments(
     async (context) => {
       try {
         const parameters = attachmentParameters(context);
+        const taskId =
+          parameters.owner.taskId ??
+          (parameters.owner.commentId
+            ? store.getComment(parameters.owner.commentId)?.taskId
+            : undefined);
+        if (taskId) options.mutations?.assertAttachmentAllowed(taskId);
         const body = await readRequestBody(context.req.raw);
         const attachment = await persistAttachment(
           store,
@@ -558,16 +584,12 @@ export function registerAttachments(
     const attachmentId = context.req.query("attachmentId")?.trim();
     try {
       const attachment = attachmentId
-        ? await deleteAttachmentById(
-            bb,
-            store,
-            attachmentId,
-            {
-              removeBlobs: options.removeBlobs,
-              removeDescriptionReferences:
-                context.req.query("removeDescriptionReferences") === "true",
-            },
-          )
+        ? await deleteAttachmentById(bb, store, attachmentId, {
+            removeBlobs: options.removeBlobs,
+            removeDescriptionReferences:
+              context.req.query("removeDescriptionReferences") === "true",
+            mutations: options.mutations,
+          })
         : null;
       if (!attachment)
         return context.json({ error: "attachment not found" }, 404);

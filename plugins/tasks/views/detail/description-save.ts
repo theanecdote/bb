@@ -7,7 +7,7 @@ export interface DescriptionSaveOutcome {
 export interface DescriptionSaverOptions {
   save(taskId: string, markdown: string): Promise<DescriptionSaveOutcome>;
   onError(message: string): void;
-  delayMs: number;
+  delayMs: number | ((taskId: string) => number);
   /** Timer injection point for tests; returns a cancel function. */
   schedule?(run: () => void, delayMs: number): () => void;
 }
@@ -58,11 +58,16 @@ export function createDescriptionSaver(
       pending = { taskId, markdown };
       cancelTimer?.();
       const attempt = pending;
-      cancelTimer = schedule(() => {
-        // Send whatever is pending now — a retry after a transport failure
-        // should carry the latest draft, not the one that armed the timer.
-        void runSave(pending ?? attempt);
-      }, options.delayMs);
+      cancelTimer = schedule(
+        () => {
+          // Send whatever is pending now — a retry after a transport failure
+          // should carry the latest draft, not the one that armed the timer.
+          void runSave(pending ?? attempt);
+        },
+        typeof options.delayMs === "function"
+          ? options.delayMs(taskId)
+          : options.delayMs,
+      );
     },
     flush(taskId) {
       cancelTimer?.();
@@ -72,7 +77,9 @@ export function createDescriptionSaver(
       pending = undefined;
       // Fire-and-forget: the component is unmounting, so there is nothing
       // left to retry from — but the draft got its send.
-      void options.save(attempt.taskId, attempt.markdown).catch(() => undefined);
+      void options
+        .save(attempt.taskId, attempt.markdown)
+        .catch(() => undefined);
     },
     hasPending: () => pending !== undefined,
   };

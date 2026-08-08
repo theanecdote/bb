@@ -34,6 +34,7 @@ export interface DetailViewProps {
 }
 
 const DESCRIPTION_SAVE_DELAY_MS = 800;
+const LINEAR_DESCRIPTION_SAVE_DELAY_MS = 10_000;
 /** Poll cadence for PR state while any attached PR is still open or draft. */
 const ACTIVE_PULL_REQUEST_REFRESH_MS = 60_000;
 
@@ -223,7 +224,10 @@ function TaskDetail({
         : { ok: false, errorMessage: result.error.message };
     },
     onError: (message) => pushRef.current("error", message),
-    delayMs: DESCRIPTION_SAVE_DELAY_MS,
+    delayMs: (taskId) =>
+      taskId === task.id && task.linearMapped
+        ? LINEAR_DESCRIPTION_SAVE_DELAY_MS
+        : DESCRIPTION_SAVE_DELAY_MS,
   });
 
   const projects = useTasksQuery(
@@ -314,6 +318,8 @@ function TaskDetail({
     setDraft({ taskId: task.id, markdown });
     saverRef.current?.onChange(task.id, markdown);
   };
+
+  const flushDescription = () => saverRef.current?.flush(task.id);
 
   // Flush a pending description save when leaving the page or switching task.
   useEffect(() => {
@@ -415,6 +421,7 @@ function TaskDetail({
           <TasksEditor
             value={descriptionValue}
             onChange={onDescriptionChange}
+            onBlur={flushDescription}
             variant="doc"
             className="min-h-24"
             placeholder="Add a description… rich text: headings, lists, code, checkboxes, @mentions"

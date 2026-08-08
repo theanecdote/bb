@@ -7,6 +7,7 @@ import { registerTasksCli } from "./cli";
 import { registerDelegation } from "./delegate";
 import { registerLifecycle } from "./lifecycle";
 import { registerMentions } from "./mentions";
+import { createLinearMappingStore } from "./linear/store";
 
 export const TASKS_PLUGIN_NAME = "Tasks";
 export const TASKS_PLUGIN_VERSION = "0.1.1";
@@ -25,7 +26,12 @@ function statusPayload() {
 export default async function plugin(bb: BbPluginApi) {
   bb.log.info(`${TASKS_PLUGIN_NAME} ${TASKS_PLUGIN_VERSION} loaded`);
 
-  const store = createStore(bb);
+  let mappings: ReturnType<typeof createLinearMappingStore> | undefined;
+  const store = createStore(
+    bb,
+    (taskId) => mappings?.getIssueMappingByTask(taskId) !== undefined,
+  );
+  mappings = createLinearMappingStore(bb.storage.database());
   registerTasksApi(bb, store);
   registerAttachments(bb, store.tasks);
   registerTasksCli(bb, store, statusPayload());
