@@ -57,6 +57,8 @@ export function registerLinearIntegration(
   const sync = async () => {
     if (!await configuredKey()) throw needsConfiguration("Configure the Linear API key and reload the plugin.");
     const result = await getService().sync();
+    if (getService().rejectedCredentials())
+      bb.status.needsConfiguration("The Linear API key was rejected. Configure a valid key and reload the plugin.");
     bb.realtime.publish("linear:changed", null);
     return result;
   };

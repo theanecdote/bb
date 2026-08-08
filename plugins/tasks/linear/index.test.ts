@@ -18,13 +18,16 @@ describe("Linear production lifecycle", () => {
   });
 
   it("contains unauthorized credentials and accepts key rotation", async () => {
-    const fetch = vi.fn(async () => new Response("unauthorized", { status: 401 }));
+    const fetch = vi.fn(async () => new Response(JSON.stringify({
+      errors: [{ extensions: { code: "AUTHENTICATION_ERROR" } }],
+    }), { status: 400 }));
     vi.stubGlobal("fetch", fetch);
     const { bb, harness } = createFakePluginHost({ settings: { linearApiKey: "secret-one" } });
     await plugin(bb);
     const first = await harness.callRpc("linearSyncNow", null);
     expect(first).toMatchObject({ ok: false, error: { code: "LINEAR_API_ERROR" } });
     expect(JSON.stringify(first)).not.toContain("secret-one");
+    expect(harness.needsConfigurationMessages.at(-1)).toContain("rejected");
     await harness.setSettings({ linearApiKey: "secret-two" });
     await harness.callRpc("linearSyncNow", null);
     expect(fetch.mock.calls[1]?.[1]?.headers).toMatchObject({ Authorization: "secret-two" });

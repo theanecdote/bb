@@ -13,8 +13,8 @@ const issue = {
   updatedAt: "2026-08-08T00:00:00.000Z",
   archivedAt: null,
   assignee: { id: "viewer-1" },
-  team: { id: "team-1", key: "ENG" },
-  state: { id: "state-1", type: "started", position: 1 },
+  team: { id: "team-1", key: "ENG", name: "Engineering" },
+  state: { id: "state-1", name: "Started", type: "started", position: 1 },
 };
 
 function response(body: unknown, status = 200, headers?: HeadersInit): Response {
@@ -22,7 +22,7 @@ function response(body: unknown, status = 200, headers?: HeadersInit): Response 
 }
 
 function assignedPage(nodes = [issue], hasNextPage = false, endCursor: string | null = null) {
-  return { data: { viewer: { id: "viewer-1", assignedIssues: { nodes, pageInfo: { hasNextPage, endCursor } } } } };
+  return { data: { viewer: { id: "viewer-1", name: "Viewer", assignedIssues: { nodes, pageInfo: { hasNextPage, endCursor } } } } };
 }
 
 describe("Linear GraphQL client", () => {
@@ -52,11 +52,32 @@ describe("Linear GraphQL client", () => {
     const now = Date.now();
     const client = createLinearClient({
       apiKey: "secret",
-      fetch: async () => response({}, 429, { "Retry-After": "2", "X-RateLimit-Reset": String(Math.ceil((now + 20_000) / 1000)) }),
+      fetch: async () => response({ errors: [{ extensions: { code: "RATELIMITED" } }] }, 400, {
+        "Retry-After": "2",
+        "X-RateLimit-Requests-Reset": String(now + 10_000),
+        "X-RateLimit-Endpoint-Requests-Reset": String(now + 20_000),
+        "X-RateLimit-Complexity-Reset": String(now + 15_000),
+      }),
     });
     const error = await client.viewerAssignedIssues().catch((value: unknown) => value);
     expect(error).toMatchObject({ code: "LINEAR_RATE_LIMITED" });
     expect((error as LinearApiError).retryAt?.getTime()).toBeGreaterThanOrEqual(now + 19_000);
+  });
+
+  it("classifies documented GraphQL authentication failures internally", async () => {
+    const client = createLinearClient({ apiKey: "secret", fetch: async () => response({
+      errors: [{ message: "unsafe detail", extensions: { code: "AUTHENTICATION_ERROR" } }],
+    }, 400) });
+    const error = await client.viewerAssignedIssues().catch((value: unknown) => value);
+    expect(error).toMatchObject({ code: "LINEAR_API_ERROR", rejectedCredentials: true });
+    expect(String(error)).not.toContain("unsafe detail");
+  });
+
+  it("safely classifies an HTTP 429 with a non-JSON body", async () => {
+    const client = createLinearClient({ apiKey: "secret", fetch: async () => new Response("slow down", {
+      status: 429, headers: { "Retry-After": "1" },
+    }) });
+    await expect(client.viewerAssignedIssues()).rejects.toMatchObject({ code: "LINEAR_RATE_LIMITED" });
   });
 
   it.each([

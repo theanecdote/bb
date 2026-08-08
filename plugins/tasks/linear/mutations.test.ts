@@ -7,6 +7,7 @@ import {
   LinearAttachmentError,
 } from "./mutations.js";
 import type { LinearClient, LinearIssue } from "./types.js";
+import { LinearApiError } from "./client.js";
 
 const disposals: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -113,6 +114,19 @@ describe("LinearMutationBridge", () => {
     inbound.commit(h.store.tasks);
     expect(h.store.tasks.getTask(h.task.id)?.title).toBe("Inbound");
     expect(h.client.updateIssue).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves Linear rate limiting and retry metadata", async () => {
+    const h = setup();
+    vi.mocked(h.client.updateIssue).mockRejectedValueOnce(
+      new LinearApiError("LINEAR_RATE_LIMITED", "Linear is rate limited. Try again later.", new Date("2026-08-08T01:00:00Z")),
+    );
+    await expect(h.bridge.prepareTaskMutation(h.task, { title: "Later" }, "user"))
+      .rejects.toMatchObject({
+        code: "linear_rate_limited",
+        message: "Linear is rate limited. Try again later.",
+        retryAt: "2026-08-08T01:00:00.000Z",
+      });
   });
 
   it("writes user comments only and rejects mapped attachment references", async () => {

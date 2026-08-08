@@ -18,7 +18,7 @@ it.skipIf(!apiKey)(
             id
             assignedIssues(
               first: 100
-              filter: { state: { type: { nin: ["completed", "canceled"] } } }
+              filter: { state: { type: { nin: ["completed", "canceled", "duplicate"] } } }
             ) {
               nodes { id identifier }
               pageInfo { hasNextPage endCursor }

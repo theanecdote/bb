@@ -31,6 +31,7 @@ export interface LinearSyncResult {
 export interface LinearSyncService {
   sync(): Promise<LinearSyncResult>;
   getStatus(): LinearSyncStatus;
+  rejectedCredentials(): boolean;
 }
 
 export interface LinearSyncDependencies {
@@ -94,6 +95,7 @@ export function createLinearSyncService(deps: LinearSyncDependencies): LinearSyn
   let viewerName: string | null = null;
   let activeIssueCount = 0;
   let rateLimitRetryAt: string | null = null;
+  let credentialsRejected = false;
   const now = () => (deps.now ?? (() => new Date()))().toISOString();
 
   const mapState = (issue: LinearIssue): TaskStatus => {
@@ -225,11 +227,14 @@ export function createLinearSyncService(deps: LinearSyncDependencies): LinearSyn
         deps.mappings.updateSyncState({ lastAttemptAt: attemptAt, lastSuccessfulSyncAt: attemptAt, lastError: null });
       });
       volatileError = null;
+      credentialsRejected = false;
       rateLimitRetryAt = null;
       for (const id of changedProjects) deps.publishProjectChanged?.(id);
       for (const [taskId, projectId] of changedTasks) deps.publishTaskChanged?.(taskId, projectId);
       return { ok: true, createdProjects, createdTasks, updatedTasks, deactivatedTasks };
     } catch (cause) {
+      credentialsRejected = typeof cause === "object" && cause !== null &&
+        "rejectedCredentials" in cause && cause.rejectedCredentials === true;
       const error = safeError(cause);
       volatileError = error;
       if (error.code === "LINEAR_RATE_LIMITED" && typeof cause === "object" && cause !== null && "retryAt" in cause) {
@@ -253,5 +258,6 @@ export function createLinearSyncService(deps: LinearSyncDependencies): LinearSyn
       const state = deps.mappings.getSyncState();
       return { syncing, viewerName, activeIssueCount, retryAt: rateLimitRetryAt, ...state, lastError: volatileError ?? (state.lastError ? { code: "LINEAR_API_ERROR", message: state.lastError } : null) };
     },
+    rejectedCredentials: () => credentialsRejected,
   };
 }

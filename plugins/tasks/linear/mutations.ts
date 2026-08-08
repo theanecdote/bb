@@ -5,6 +5,7 @@ import type {
   LinearWorkflowState,
 } from "./types";
 import type { LinearMappingStore } from "./store";
+import { LinearApiError } from "./client";
 
 export type TaskMutationOrigin =
   | "user"
@@ -14,10 +15,10 @@ export type TaskMutationOrigin =
   | "linear-sync";
 
 export class LinearMutationError extends Error {
-  readonly code = "linear_write_failed" as const;
-
   constructor(
+    readonly code: "linear_write_failed" | "linear_rate_limited" = "linear_write_failed",
     message = "Linear rejected the task change. BB was not changed.",
+    readonly retryAt?: string,
   ) {
     super(message);
     this.name = "LinearMutationError";
@@ -141,6 +142,7 @@ export function createLinearMutationBridge(deps: {
         const stateId = await resolveState(mapping.linearTeamId, patch.status);
         if (!stateId)
           throw new LinearMutationError(
+            "linear_write_failed",
             "No compatible Linear workflow state was found",
           );
         input.stateId = stateId;
@@ -154,7 +156,9 @@ export function createLinearMutationBridge(deps: {
       let issue;
       try {
         issue = await deps.client.updateIssue(mapping.linearIssueId, input);
-      } catch {
+      } catch (error) {
+        if (error instanceof LinearApiError && error.code === "LINEAR_RATE_LIMITED")
+          throw new LinearMutationError("linear_rate_limited", error.message, error.retryAt?.toISOString());
         throw new LinearMutationError();
       }
       return {
@@ -175,8 +179,11 @@ export function createLinearMutationBridge(deps: {
         if (BB_ATTACHMENT_URL.test(body)) throw new LinearAttachmentError();
         try {
           await deps.client.createComment(mapping.linearIssueId, body);
-        } catch {
+        } catch (error) {
+          if (error instanceof LinearApiError && error.code === "LINEAR_RATE_LIMITED")
+            throw new LinearMutationError("linear_rate_limited", error.message, error.retryAt?.toISOString());
           throw new LinearMutationError(
+            "linear_write_failed",
             "Linear rejected the comment. BB was not changed.",
           );
         }

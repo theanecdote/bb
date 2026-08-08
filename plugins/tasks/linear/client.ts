@@ -13,17 +13,24 @@ const MAX_PAGES = 100;
 const MAX_ISSUES = 10_000;
 const BATCH_SIZE = 50;
 
-const teamSchema = z.object({ id: z.string(), key: z.string(), name: z.string().default("") });
-const stateSchema = z.object({ id: z.string(), name: z.string().default(""), type: z.string(), position: z.number() });
+const teamSchema = z.object({ id: z.string(), key: z.string(), name: z.string() });
+const stateSchema = z.object({ id: z.string(), name: z.string(), type: z.string(), position: z.number() });
+const linearIssueUrlSchema = z.url().refine((value) => {
+  const url = new URL(value);
+  return url.protocol === "https:" && url.hostname === "linear.app" && url.pathname.split("/").includes("issue");
+}, "Expected a canonical Linear issue URL");
 const issueSchema = z.object({
   id: z.string(), identifier: z.string(), title: z.string(), description: z.string().nullable(),
-  priority: z.number(), dueDate: z.string().nullable(), url: z.string(), updatedAt: z.string(),
+  priority: z.number(), dueDate: z.string().nullable(), url: linearIssueUrlSchema, updatedAt: z.string(),
   archivedAt: z.string().nullable(), assignee: z.object({ id: z.string() }).nullable(), team: teamSchema, state: stateSchema,
 });
 const pageInfoSchema = z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() });
-const graphQLErrorsSchema = z.array(z.object({ message: z.string().optional() }).passthrough()).optional();
+const graphQLErrorsSchema = z.array(z.object({
+  message: z.string().optional(),
+  extensions: z.object({ code: z.string().optional() }).passthrough().optional(),
+}).passthrough()).optional();
 const envelopeSchema = z.object({ errors: graphQLErrorsSchema }).passthrough();
-const assignedSchema = z.object({ data: z.object({ viewer: z.object({ id: z.string(), name: z.string().default(""), assignedIssues: z.object({ nodes: z.array(issueSchema), pageInfo: pageInfoSchema }) }) }) });
+const assignedSchema = z.object({ data: z.object({ viewer: z.object({ id: z.string(), name: z.string(), assignedIssues: z.object({ nodes: z.array(issueSchema), pageInfo: pageInfoSchema }) }) }) });
 const issuesSchema = z.object({ data: z.object({ issues: z.object({ nodes: z.array(issueSchema) }) }) });
 const statesSchema = z.object({ data: z.object({ workflowStates: z.object({ nodes: z.array(stateSchema), pageInfo: pageInfoSchema }) }) });
 const updateSchema = z.object({ data: z.object({ issueUpdate: z.object({ success: z.literal(true), issue: issueSchema }) }) });
@@ -35,6 +42,7 @@ export class LinearApiError extends Error {
     readonly code: "LINEAR_RATE_LIMITED" | "LINEAR_API_ERROR",
     message: string,
     readonly retryAt?: Date,
+    readonly rejectedCredentials = false,
   ) { super(message); }
 }
 
@@ -46,7 +54,7 @@ export interface CreateLinearClientOptions {
 
 const ISSUE_FIELDS = `id identifier title description priority dueDate url updatedAt archivedAt assignee { id } team { id key name } state { id name type position }`;
 const QUERIES = {
-  ViewerAssignedIssues: `query ViewerAssignedIssues($after: String) { viewer { id name assignedIssues(first: 100, after: $after, filter: { state: { type: { nin: ["completed", "canceled"] } } }) { nodes { ${ISSUE_FIELDS} } pageInfo { hasNextPage endCursor } } } }`,
+  ViewerAssignedIssues: `query ViewerAssignedIssues($after: String) { viewer { id name assignedIssues(first: 100, after: $after, filter: { state: { type: { nin: ["completed", "canceled", "duplicate"] } } }) { nodes { ${ISSUE_FIELDS} } pageInfo { hasNextPage endCursor } } } }`,
   IssuesByIds: `query IssuesByIds($ids: [ID!]!, $includeArchived: Boolean!) { issues(first: 50, filter: { id: { in: $ids } }, includeArchived: $includeArchived) { nodes { ${ISSUE_FIELDS} } } }`,
   TeamStates: `query TeamStates($teamId: ID!, $after: String) { workflowStates(first: 100, after: $after, filter: { team: { id: { eq: $teamId } } }) { nodes { id name type position } pageInfo { hasNextPage endCursor } } }`,
   UpdateIssue: `mutation UpdateIssue($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success issue { ${ISSUE_FIELDS} } } }`,
@@ -61,11 +69,15 @@ function retryAt(headers: Headers): Date | undefined {
     const value = Number.isFinite(seconds) ? Date.now() + seconds * 1000 : Date.parse(retry);
     if (Number.isFinite(value)) candidates.push(value);
   }
-  for (const name of ["x-ratelimit-reset", "x-rate-limit-reset", "ratelimit-reset"]) {
+  for (const name of [
+    "x-ratelimit-requests-reset",
+    "x-ratelimit-endpoint-requests-reset",
+    "x-ratelimit-complexity-reset",
+  ]) {
     const raw = headers.get(name);
     if (!raw) continue;
     const value = Number(raw);
-    if (Number.isFinite(value)) candidates.push(value < 10_000_000_000 ? value * 1000 : value);
+    if (Number.isFinite(value)) candidates.push(value);
   }
   return candidates.length ? new Date(Math.max(...candidates)) : undefined;
 }
@@ -85,12 +97,22 @@ export function createLinearClient(options: CreateLinearClientOptions): LinearCl
         method: "POST", headers: { Authorization: options.apiKey, "Content-Type": "application/json" },
         body: JSON.stringify({ query: QUERIES[operationName], operationName, variables }), signal: controller.signal,
       });
-      if (response.status === 429) throw new LinearApiError("LINEAR_RATE_LIMITED", "Linear is rate limited. Try again later.", retryAt(response.headers));
-      if (!response.ok) throw new LinearApiError("LINEAR_API_ERROR", response.status === 401 ? "Linear authentication failed." : "Linear API request failed.");
       let json: unknown;
-      try { json = await response.json(); } catch { throw new LinearApiError("LINEAR_API_ERROR", "Linear returned an invalid response."); }
+      try { json = await response.json(); } catch {
+        if (response.status === 429)
+          throw new LinearApiError("LINEAR_RATE_LIMITED", "Linear is rate limited. Try again later.", retryAt(response.headers));
+        if (response.status === 401)
+          throw new LinearApiError("LINEAR_API_ERROR", "Linear authentication failed.", undefined, true);
+        throw new LinearApiError("LINEAR_API_ERROR", "Linear returned an invalid response.");
+      }
       const envelope = envelopeSchema.safeParse(json);
-      if (!envelope.success || (envelope.data.errors?.length ?? 0) > 0) throw new LinearApiError("LINEAR_API_ERROR", "Linear API request failed.");
+      const graphQLErrors = envelope.success ? envelope.data.errors ?? [] : [];
+      if (response.status === 429 || graphQLErrors.some((error) => error.extensions?.code === "RATELIMITED"))
+        throw new LinearApiError("LINEAR_RATE_LIMITED", "Linear is rate limited. Try again later.", retryAt(response.headers));
+      if (response.status === 401 || graphQLErrors.some((error) => error.extensions?.code === "AUTHENTICATION_ERROR"))
+        throw new LinearApiError("LINEAR_API_ERROR", "Linear authentication failed.", undefined, true);
+      if (!response.ok || !envelope.success || graphQLErrors.length > 0)
+        throw new LinearApiError("LINEAR_API_ERROR", "Linear API request failed.");
       const parsed = schema.safeParse(json);
       if (!parsed.success) throw new LinearApiError("LINEAR_API_ERROR", "Linear returned an invalid response.");
       return parsed.data;
