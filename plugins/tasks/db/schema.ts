@@ -244,10 +244,10 @@ const MIGRATIONS = [
     );
 
     CREATE TABLE linear_issue_tasks (
-      linear_issue_id TEXT PRIMARY KEY,
-      task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE CASCADE,
+      task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+      linear_issue_id TEXT NOT NULL,
       linear_team_id TEXT NOT NULL REFERENCES linear_team_projects(linear_team_id) ON DELETE CASCADE,
-      identifier TEXT NOT NULL UNIQUE,
+      identifier TEXT NOT NULL,
       url TEXT NOT NULL,
       linear_state_id TEXT NOT NULL,
       linear_updated_at TEXT NOT NULL,
@@ -266,6 +266,10 @@ const MIGRATIONS = [
 
     CREATE INDEX idx_linear_issue_tasks_team_active
       ON linear_issue_tasks(linear_team_id, active);
+    CREATE INDEX idx_linear_issue_tasks_issue
+      ON linear_issue_tasks(linear_issue_id);
+    CREATE UNIQUE INDEX idx_linear_issue_tasks_one_active_issue
+      ON linear_issue_tasks(linear_issue_id) WHERE active = 1;
   `,
 ] as const;
 

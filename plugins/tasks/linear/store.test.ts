@@ -47,7 +47,7 @@ describe("Linear mapping store", () => {
       expect(mappings.upsertIssueMapping(input)).toEqual(
         mappings.upsertIssueMapping(input),
       );
-      expect(mappings.getIssueMapping("issue-1")?.taskId).toBe(task.id);
+      expect(mappings.getActiveIssueMapping("issue-1")?.taskId).toBe(task.id);
       expect(mappings.isMappedProject(mapped.id)).toBe(true);
       expect(mappings.isMappedProject(unmapped.id)).toBe(false);
     } finally {
@@ -55,7 +55,7 @@ describe("Linear mapping store", () => {
     }
   });
 
-  it("cascades mappings when Tasks entities are removed", async () => {
+  it("keeps task-identity history, enforces one active row, and cascades each task safely", async () => {
     const { bb, harness } = createFakePluginHost({
       pluginId: "linear-cascade-test",
     });
@@ -68,7 +68,14 @@ describe("Linear mapping store", () => {
         prefix: "PER",
         color: "blue",
       });
-      const task = tasks.createTask({ projectId: project.id, title: "Issue" });
+      const oldTask = tasks.createTask({
+        projectId: project.id,
+        title: "Old issue",
+      });
+      const newTask = tasks.createTask({
+        projectId: project.id,
+        title: "New issue",
+      });
       mappings.upsertTeamMapping({
         linearTeamId: "team-1",
         projectId: project.id,
@@ -77,7 +84,7 @@ describe("Linear mapping store", () => {
       });
       mappings.upsertIssueMapping({
         linearIssueId: "issue-1",
-        taskId: task.id,
+        taskId: oldTask.id,
         linearTeamId: "team-1",
         identifier: "PER-1",
         url: "https://linear.app/issue/PER-1",
@@ -85,9 +92,34 @@ describe("Linear mapping store", () => {
         linearUpdatedAt: "2026-08-08T00:00:00.000Z",
         active: true,
       });
-      tasks.deleteProject(project.id);
-      expect(mappings.getTeamMapping("team-1")).toBeUndefined();
-      expect(mappings.getIssueMapping("issue-1")).toBeUndefined();
+      mappings.setIssueMappingActive(oldTask.id, false);
+      mappings.upsertIssueMapping({
+        linearIssueId: "issue-1",
+        taskId: newTask.id,
+        linearTeamId: "team-1",
+        identifier: "PER-2",
+        url: "https://linear.app/issue/PER-2",
+        linearStateId: "state-1",
+        linearUpdatedAt: "2026-08-09T00:00:00.000Z",
+        active: true,
+      });
+      expect(mappings.getIssueMappingByTask(oldTask.id)).toMatchObject({
+        active: false,
+        identifier: "PER-1",
+      });
+      expect(mappings.getActiveIssueMapping("issue-1")?.taskId).toBe(
+        newTask.id,
+      );
+      expect(() => mappings.setIssueMappingActive(oldTask.id, true)).toThrow();
+
+      tasks.deleteTask(oldTask.id);
+      expect(mappings.getIssueMappingByTask(oldTask.id)).toBeUndefined();
+      expect(mappings.getActiveIssueMapping("issue-1")?.taskId).toBe(
+        newTask.id,
+      );
+      tasks.deleteTask(newTask.id);
+      expect(mappings.getActiveIssueMapping("issue-1")).toBeUndefined();
+      expect(mappings.getTeamMapping("team-1")).toBeDefined();
     } finally {
       await harness.dispose();
     }

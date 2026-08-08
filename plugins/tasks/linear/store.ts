@@ -83,12 +83,18 @@ export function createLinearMappingStore(db: PluginDatabase) {
       team_key = excluded.team_key,
       team_name = excluded.team_name
   `);
-  const getIssue = db.prepare<[string], IssueRow>(
-    "SELECT * FROM linear_issue_tasks WHERE linear_issue_id = ?",
+  const getActiveIssue = db.prepare<[string], IssueRow>(
+    "SELECT * FROM linear_issue_tasks WHERE linear_issue_id = ? AND active = 1",
   );
   const getIssueByTask = db.prepare<[string], IssueRow>(
     "SELECT * FROM linear_issue_tasks WHERE task_id = ?",
   );
+  const getIssueForTeam = db.prepare<[string, string], IssueRow>(`
+    SELECT * FROM linear_issue_tasks
+    WHERE linear_issue_id = ? AND linear_team_id = ?
+    ORDER BY active DESC, linear_updated_at DESC, task_id ASC
+    LIMIT 1
+  `);
   const upsertIssue = db.prepare<
     [string, string, string, string, string, string, string, number]
   >(`
@@ -96,8 +102,8 @@ export function createLinearMappingStore(db: PluginDatabase) {
       linear_issue_id, task_id, linear_team_id, identifier, url,
       linear_state_id, linear_updated_at, active
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(linear_issue_id) DO UPDATE SET
-      task_id = excluded.task_id,
+    ON CONFLICT(task_id) DO UPDATE SET
+      linear_issue_id = excluded.linear_issue_id,
       linear_team_id = excluded.linear_team_id,
       identifier = excluded.identifier,
       url = excluded.url,
@@ -105,8 +111,8 @@ export function createLinearMappingStore(db: PluginDatabase) {
       linear_updated_at = excluded.linear_updated_at,
       active = excluded.active
   `);
-  const setActive = db.prepare<[number, string]>(
-    "UPDATE linear_issue_tasks SET active = ? WHERE linear_issue_id = ?",
+  const setActiveByTask = db.prepare<[number, string]>(
+    "UPDATE linear_issue_tasks SET active = ? WHERE task_id = ?",
   );
   const listActive = db.prepare<[], IssueRow>(
     "SELECT * FROM linear_issue_tasks WHERE active = 1 ORDER BY linear_issue_id",
@@ -124,8 +130,8 @@ export function createLinearMappingStore(db: PluginDatabase) {
     const row = getTeam.get(linearTeamId);
     return row ? teamFromRow(row) : undefined;
   };
-  const getIssueMapping = (linearIssueId: string) => {
-    const row = getIssue.get(linearIssueId);
+  const getActiveIssueMapping = (linearIssueId: string) => {
+    const row = getActiveIssue.get(linearIssueId);
     return row ? issueFromRow(row) : undefined;
   };
 
@@ -147,7 +153,11 @@ export function createLinearMappingStore(db: PluginDatabase) {
     isMappedProject(projectId: string) {
       return getTeamByProject.get(projectId) !== undefined;
     },
-    getIssueMapping,
+    getActiveIssueMapping,
+    getIssueMappingForTeam(linearIssueId: string, linearTeamId: string) {
+      const row = getIssueForTeam.get(linearIssueId, linearTeamId);
+      return row ? issueFromRow(row) : undefined;
+    },
     getIssueMappingByTask(taskId: string) {
       const row = getIssueByTask.get(taskId);
       return row ? issueFromRow(row) : undefined;
@@ -155,9 +165,12 @@ export function createLinearMappingStore(db: PluginDatabase) {
     getIssueMappingsByTasks(taskIds: readonly string[]) {
       const result = new Map<string, LinearIssueMapping>();
       if (taskIds.length === 0) return result;
-      const rows = db.prepare<string[], IssueRow>(
-        `SELECT * FROM linear_issue_tasks WHERE task_id IN (${taskIds.map(() => "?").join(", ")})`,
-      ).all(...taskIds);
+      const rows = db
+        .prepare<
+          string[],
+          IssueRow
+        >(`SELECT * FROM linear_issue_tasks WHERE task_id IN (${taskIds.map(() => "?").join(", ")})`)
+        .all(...taskIds);
       for (const row of rows) result.set(row.task_id, issueFromRow(row));
       return result;
     },
@@ -172,11 +185,12 @@ export function createLinearMappingStore(db: PluginDatabase) {
         mapping.linearUpdatedAt,
         mapping.active ? 1 : 0,
       );
-      return getIssueMapping(mapping.linearIssueId)!;
+      return issueFromRow(getIssueByTask.get(mapping.taskId)!);
     },
-    setIssueActive(linearIssueId: string, active: boolean) {
-      setActive.run(active ? 1 : 0, linearIssueId);
-      return getIssueMapping(linearIssueId);
+    setIssueMappingActive(taskId: string, active: boolean) {
+      setActiveByTask.run(active ? 1 : 0, taskId);
+      const row = getIssueByTask.get(taskId);
+      return row ? issueFromRow(row) : undefined;
     },
     listActiveIssueMappings() {
       return listActive.all().map(issueFromRow);

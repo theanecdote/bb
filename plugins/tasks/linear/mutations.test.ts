@@ -116,17 +116,42 @@ describe("LinearMutationBridge", () => {
     expect(h.client.updateIssue).toHaveBeenCalledTimes(1);
   });
 
+  it("refuses outbound edits and comments from an inactive historical mapping", async () => {
+    const h = setup();
+    h.mappings.setIssueMappingActive(h.task.id, false);
+    await expect(
+      h.bridge.prepareTaskMutation(h.task, { title: "Stale edit" }, "user"),
+    ).rejects.toMatchObject({
+      code: "linear_write_failed",
+      message: expect.stringContaining("read-only historical"),
+    });
+    await expect(
+      h.bridge.prepareUserComment(h.task.id, "stale comment", "user"),
+    ).rejects.toMatchObject({ code: "linear_write_failed" });
+    expect(h.client.updateIssue).not.toHaveBeenCalled();
+    expect(h.client.createComment).not.toHaveBeenCalled();
+    expect(() => h.bridge.assertAttachmentAllowed(h.task.id)).toThrow(
+      LinearAttachmentError,
+    );
+    expect(h.bridge.isMappedTask(h.task.id)).toBe(true);
+  });
+
   it("preserves Linear rate limiting and retry metadata", async () => {
     const h = setup();
     vi.mocked(h.client.updateIssue).mockRejectedValueOnce(
-      new LinearApiError("LINEAR_RATE_LIMITED", "Linear is rate limited. Try again later.", new Date("2026-08-08T01:00:00Z")),
+      new LinearApiError(
+        "LINEAR_RATE_LIMITED",
+        "Linear is rate limited. Try again later.",
+        new Date("2026-08-08T01:00:00Z"),
+      ),
     );
-    await expect(h.bridge.prepareTaskMutation(h.task, { title: "Later" }, "user"))
-      .rejects.toMatchObject({
-        code: "linear_rate_limited",
-        message: "Linear is rate limited. Try again later.",
-        retryAt: "2026-08-08T01:00:00.000Z",
-      });
+    await expect(
+      h.bridge.prepareTaskMutation(h.task, { title: "Later" }, "user"),
+    ).rejects.toMatchObject({
+      code: "linear_rate_limited",
+      message: "Linear is rate limited. Try again later.",
+      retryAt: "2026-08-08T01:00:00.000Z",
+    });
   });
 
   it("writes user comments only and rejects mapped attachment references", async () => {

@@ -16,7 +16,9 @@ export type TaskMutationOrigin =
 
 export class LinearMutationError extends Error {
   constructor(
-    readonly code: "linear_write_failed" | "linear_rate_limited" = "linear_write_failed",
+    readonly code:
+      | "linear_write_failed"
+      | "linear_rate_limited" = "linear_write_failed",
     message = "Linear rejected the task change. BB was not changed.",
     readonly retryAt?: string,
   ) {
@@ -33,6 +35,12 @@ export class LinearAttachmentError extends Error {
     this.name = "LinearAttachmentError";
   }
 }
+
+const inactiveMappingError = () =>
+  new LinearMutationError(
+    "linear_write_failed",
+    "This task is a read-only historical Linear mapping. Edit the current mapped task instead.",
+  );
 
 export interface TaskMutationCommit {
   commit(store: TasksStore): Task;
@@ -125,6 +133,7 @@ export function createLinearMutationBridge(deps: {
           commit: (store) => store.updateTaskIfChanged(current.id, patch).task,
         };
       }
+      if (!mapping.active) throw inactiveMappingError();
 
       const input: LinearIssueUpdate = {};
       if (patch.title !== undefined && patch.title !== current.title)
@@ -157,8 +166,15 @@ export function createLinearMutationBridge(deps: {
       try {
         issue = await deps.client.updateIssue(mapping.linearIssueId, input);
       } catch (error) {
-        if (error instanceof LinearApiError && error.code === "LINEAR_RATE_LIMITED")
-          throw new LinearMutationError("linear_rate_limited", error.message, error.retryAt?.toISOString());
+        if (
+          error instanceof LinearApiError &&
+          error.code === "LINEAR_RATE_LIMITED"
+        )
+          throw new LinearMutationError(
+            "linear_rate_limited",
+            error.message,
+            error.retryAt?.toISOString(),
+          );
         throw new LinearMutationError();
       }
       return {
@@ -176,12 +192,20 @@ export function createLinearMutationBridge(deps: {
     async prepareUserComment(taskId, body, origin) {
       const mapping = deps.mappings.getIssueMappingByTask(taskId);
       if (mapping && origin !== "linear-sync") {
+        if (!mapping.active) throw inactiveMappingError();
         if (BB_ATTACHMENT_URL.test(body)) throw new LinearAttachmentError();
         try {
           await deps.client.createComment(mapping.linearIssueId, body);
         } catch (error) {
-          if (error instanceof LinearApiError && error.code === "LINEAR_RATE_LIMITED")
-            throw new LinearMutationError("linear_rate_limited", error.message, error.retryAt?.toISOString());
+          if (
+            error instanceof LinearApiError &&
+            error.code === "LINEAR_RATE_LIMITED"
+          )
+            throw new LinearMutationError(
+              "linear_rate_limited",
+              error.message,
+              error.retryAt?.toISOString(),
+            );
           throw new LinearMutationError(
             "linear_write_failed",
             "Linear rejected the comment. BB was not changed.",

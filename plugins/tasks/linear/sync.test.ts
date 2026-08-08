@@ -7,13 +7,22 @@ import { createLinearSyncService } from "./sync.js";
 import type { LinearClient, LinearIssue } from "./types.js";
 
 const disposals: Array<() => Promise<void>> = [];
-afterEach(async () => { while (disposals.length) await disposals.pop()!(); });
+afterEach(async () => {
+  while (disposals.length) await disposals.pop()!();
+});
 
 function issue(overrides: Partial<LinearIssue> = {}): LinearIssue {
   return {
-    id: "issue-1", identifier: "PER-2165", title: "Projected", description: "Markdown",
-    priority: 2, dueDate: "2026-08-20", url: "https://linear.app/PER-2165",
-    updatedAt: "2026-08-08T00:00:00.000Z", archivedAt: null, assignee: { id: "viewer" },
+    id: "issue-1",
+    identifier: "PER-2165",
+    title: "Projected",
+    description: "Markdown",
+    priority: 2,
+    dueDate: "2026-08-20",
+    url: "https://linear.app/PER-2165",
+    updatedAt: "2026-08-08T00:00:00.000Z",
+    archivedAt: null,
+    assignee: { id: "viewer" },
     team: { id: "team-per", key: "PER", name: "People" },
     state: { id: "started", name: "Started", type: "started", position: 1 },
     ...overrides,
@@ -21,41 +30,84 @@ function issue(overrides: Partial<LinearIssue> = {}): LinearIssue {
 }
 
 function setup(active: LinearIssue[] = [issue()]) {
-  const { bb, harness } = createFakePluginHost({ pluginId: "linear-sync-test" });
+  const { bb, harness } = createFakePluginHost({
+    pluginId: "linear-sync-test",
+  });
   disposals.push(() => harness.dispose());
   const store = createStore(bb);
   const mappings = createLinearMappingStore(bb.storage.database());
   const client: LinearClient = {
-    viewerAssignedIssues: vi.fn(async () => ({ viewerId: "viewer", viewerName: "Viewer", issues: active })),
-    issuesByIds: vi.fn(async () => []), teamStates: vi.fn(async () => []),
-    updateIssue: vi.fn(), createComment: vi.fn(),
+    viewerAssignedIssues: vi.fn(async () => ({
+      viewerId: "viewer",
+      viewerName: "Viewer",
+      issues: active,
+    })),
+    issuesByIds: vi.fn(async () => []),
+    teamStates: vi.fn(async () => []),
+    updateIssue: vi.fn(),
+    createComment: vi.fn(),
   };
-  const taskEvents = vi.fn(), projectEvents = vi.fn(), warn = vi.fn();
-  const service = createLinearSyncService({ client, mappings, store, warn,
-    publishTaskChanged: taskEvents, publishProjectChanged: projectEvents,
-    now: () => new Date("2026-08-08T12:00:00.000Z") });
+  const taskEvents = vi.fn(),
+    projectEvents = vi.fn(),
+    warn = vi.fn();
+  const service = createLinearSyncService({
+    client,
+    mappings,
+    store,
+    warn,
+    publishTaskChanged: taskEvents,
+    publishProjectChanged: projectEvents,
+    now: () => new Date("2026-08-08T12:00:00.000Z"),
+  });
   return { store, mappings, client, service, taskEvents, projectEvents, warn };
 }
 
 describe("Linear projection and reconciliation", () => {
   it("maps fields and states, preserves no-op revisions, and logs unknown states once", async () => {
-    const unknown = issue({ state: { id: "mystery", name: "Mystery", type: "future", position: 1 } });
+    const unknown = issue({
+      state: { id: "mystery", name: "Mystery", type: "future", position: 1 },
+    });
     const h = setup([unknown]);
     expect((await h.service.sync()).ok).toBe(true);
     const project = h.store.tasks.listProjects()[0]!;
     const task = h.store.tasks.listTasks({ projectId: project.id })[0]!;
     expect(project).toMatchObject({ prefix: "PER", color: DEFAULT_COLOR });
-    expect(task).toMatchObject({ key: "PER-2165", description: "Markdown", priority: "high", dueDate: "2026-08-20", status: "backlog" });
-    const cursor = h.store.tasks.listTasksPage({ projectId: project.id, limit: 1 }).nextCursor;
+    expect(task).toMatchObject({
+      key: "PER-2165",
+      description: "Markdown",
+      priority: "high",
+      dueDate: "2026-08-20",
+      status: "backlog",
+    });
+    const cursor = h.store.tasks.listTasksPage({
+      projectId: project.id,
+      limit: 1,
+    }).nextCursor;
     await h.service.sync();
     expect(h.warn).toHaveBeenCalledTimes(1);
     expect(h.taskEvents).toHaveBeenCalledTimes(1);
-    expect(() => h.store.tasks.listTasksPage({ projectId: project.id, limit: 1, ...(cursor ? { cursor } : {}) })).not.toThrow();
+    expect(() =>
+      h.store.tasks.listTasksPage({
+        projectId: project.id,
+        limit: 1,
+        ...(cursor ? { cursor } : {}),
+      }),
+    ).not.toThrow();
   });
 
   it("validates the complete snapshot before creating any team", async () => {
-    const h = setup([issue(), issue({ id: "bad", identifier: "bad-1", team: { id: "bad", key: "bad", name: "Bad" } })]);
-    await expect(h.service.sync()).resolves.toMatchObject({ ok: false, error: { code: "LINEAR_MAPPING_ERROR" } });
+    const h = setup([
+      issue(),
+      issue({
+        id: "bad",
+        identifier: "bad-1",
+        team: { id: "bad", key: "bad", name: "Bad" },
+      }),
+    ]);
+    await expect(h.service.sync()).resolves.toMatchObject({
+      ok: false,
+      error: { code: "LINEAR_MAPPING_ERROR" },
+    });
     expect(h.store.tasks.listProjects()).toHaveLength(0);
   });
 
@@ -76,7 +128,9 @@ describe("Linear projection and reconciliation", () => {
       team: { id: "team-per", key: "PER", name: "People Operations" },
     });
     expect((await h.service.sync()).ok).toBe(true);
-    expect(h.store.tasks.getProject(project.id)?.name).toBe("People Operations");
+    expect(h.store.tasks.getProject(project.id)?.name).toBe(
+      "People Operations",
+    );
     expect(h.mappings.getTeamMapping("team-per")?.teamName).toBe(
       "People Operations",
     );
@@ -91,7 +145,10 @@ describe("Linear projection and reconciliation", () => {
     active[0] = issue({ updatedAt: "2026-08-09T00:00:00.000Z" });
     await h.service.sync();
     expect(h.store.tasks.getTask(task.id)?.status).toBe("in_review");
-    active[0] = issue({ updatedAt: "2026-08-10T00:00:00.000Z", state: { id: "done", name: "Done", type: "completed", position: 2 } });
+    active[0] = issue({
+      updatedAt: "2026-08-10T00:00:00.000Z",
+      state: { id: "done", name: "Done", type: "completed", position: 2 },
+    });
     await h.service.sync();
     expect(h.store.tasks.getTask(task.id)?.status).toBe("done");
   });
@@ -102,25 +159,84 @@ describe("Linear projection and reconciliation", () => {
     await h.service.sync();
     const task = h.store.tasks.listTasks()[0]!;
     active.splice(0);
-    vi.mocked(h.client.issuesByIds).mockResolvedValueOnce([issue({ archivedAt: "2026-08-09T00:00:00Z", state: { id: "done", name: "Done", type: "completed", position: 2 } })]);
+    vi.mocked(h.client.issuesByIds).mockResolvedValueOnce([
+      issue({
+        archivedAt: "2026-08-09T00:00:00Z",
+        state: { id: "done", name: "Done", type: "completed", position: 2 },
+      }),
+    ]);
     await h.service.sync();
     expect(h.store.tasks.getTask(task.id)?.status).toBe("done");
-    expect(h.mappings.getIssueMapping("issue-1")?.active).toBe(false);
+    expect(h.mappings.getActiveIssueMapping("issue-1")).toBeUndefined();
     active.push(issue());
     await h.service.sync();
-    expect(h.mappings.getIssueMapping("issue-1")?.taskId).toBe(task.id);
+    expect(h.mappings.getActiveIssueMapping("issue-1")?.taskId).toBe(task.id);
+  });
+
+  it("preserves the old mapped task and creates one active mapping after a cross-team move", async () => {
+    const active = [issue()];
+    const h = setup(active);
+    await h.service.sync();
+    const oldTask = h.store.tasks.listTasks()[0]!;
+
+    active[0] = issue({
+      identifier: "ENG-42",
+      team: { id: "team-eng", key: "ENG", name: "Engineering" },
+      updatedAt: "2026-08-09T00:00:00.000Z",
+    });
+    expect(await h.service.sync()).toMatchObject({ ok: true, createdTasks: 1 });
+    const tasks = h.store.tasks.listTasks();
+    expect(tasks).toHaveLength(2);
+    const newTask = tasks.find((task) => task.id !== oldTask.id)!;
+    expect(newTask.key).toBe("ENG-42");
+    expect(h.mappings.getIssueMappingByTask(oldTask.id)).toMatchObject({
+      linearIssueId: "issue-1",
+      identifier: "PER-2165",
+      active: false,
+    });
+    expect(h.mappings.getIssueMappingByTask(newTask.id)).toMatchObject({
+      linearIssueId: "issue-1",
+      identifier: "ENG-42",
+      active: true,
+    });
+    expect(h.mappings.getActiveIssueMapping("issue-1")?.taskId).toBe(
+      newTask.id,
+    );
+
+    expect(await h.service.sync()).toMatchObject({
+      ok: true,
+      createdTasks: 0,
+      updatedTasks: 0,
+    });
+    expect(h.store.tasks.listTasks()).toHaveLength(2);
+    expect(h.mappings.listActiveIssueMappings()).toHaveLength(1);
   });
 
   it("returns one promise for concurrent calls and records safe failures", async () => {
     const h = setup([]);
     let release!: () => void;
-    vi.mocked(h.client.viewerAssignedIssues).mockImplementationOnce(() => new Promise((resolve) => { release = () => resolve({ viewerId: "viewer", viewerName: "Viewer", issues: [] }); }));
-    const first = h.service.sync(), second = h.service.sync();
+    vi.mocked(h.client.viewerAssignedIssues).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () =>
+            resolve({ viewerId: "viewer", viewerName: "Viewer", issues: [] });
+        }),
+    );
+    const first = h.service.sync(),
+      second = h.service.sync();
     expect(first).toBe(second);
-    release(); await first;
-    vi.mocked(h.client.viewerAssignedIssues).mockRejectedValueOnce(new Error("secret details"));
+    release();
+    await first;
+    vi.mocked(h.client.viewerAssignedIssues).mockRejectedValueOnce(
+      new Error("secret details"),
+    );
     const failed = await h.service.sync();
-    expect(failed).toMatchObject({ ok: false, error: { message: "Linear synchronization failed" } });
-    expect(h.service.getStatus().lastSuccessfulSyncAt).toBe("2026-08-08T12:00:00.000Z");
+    expect(failed).toMatchObject({
+      ok: false,
+      error: { message: "Linear synchronization failed" },
+    });
+    expect(h.service.getStatus().lastSuccessfulSyncAt).toBe(
+      "2026-08-08T12:00:00.000Z",
+    );
   });
 });
