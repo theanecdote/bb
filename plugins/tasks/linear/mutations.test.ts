@@ -239,8 +239,6 @@ describe("LinearMutationBridge", () => {
   it("records mutation diagnostics without erasing sync retry state", () => {
     const h = setup();
     h.mappings.updateSyncState({
-      viewerName: "Viewer",
-      activeIssueCount: 4,
       lastSuccessfulSyncAt: "2026-08-08T00:00:00.000Z",
       lastAttemptAt: "2026-08-08T00:05:00.000Z",
       lastError: "Linear is rate limited. Try again later.",

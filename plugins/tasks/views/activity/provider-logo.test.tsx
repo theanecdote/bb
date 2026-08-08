@@ -7,6 +7,18 @@ import { CommentProviderAvatar } from "./provider-logo.js";
 afterEach(cleanup);
 
 describe("CommentProviderAvatar", () => {
+  it("renders the Amp brand glyph for Amp ACP comments", () => {
+    const provider: CommentProvider = {
+      id: "acp-amp",
+      name: "Amp (ACP)",
+      logoUrl: null,
+    };
+    const { container } = render(<CommentProviderAvatar provider={provider} />);
+
+    expect(screen.getByRole("img", { name: "Amp (ACP)" })).not.toBeNull();
+    expect(container.querySelector("svg > title")?.textContent).toBe("Amp");
+  });
+
   it("renders a known provider's brand glyph labeled by the provider name", () => {
     const provider: CommentProvider = {
       id: "codex",
